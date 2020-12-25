@@ -1,0 +1,343 @@
+---
+title: "Housing Prices"
+author: "Me"
+date: "11/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#load libraries
+```{r}
+library(tidyverse)
+library(caret)
+library(ggplot2)
+```
+
+#Read data
+```{r}
+train = read.csv('train.csv')
+test = read.csv('test.csv')
+```
+
+#Explore data and check for missing values
+
+```{r}
+missing_values = map_dbl(train, function(x) sum(is.na(x)))
+missing_values = missing_values[missing_values != 0]
+missing_values
+```
+#check missing  value in test
+
+```{r}
+map_dbl(test, function(x) sum(is.na(x)))
+```
+#plot sale price
+
+```{r}
+library(ggplot2)
+train %>%
+  ggplot(aes(SalePrice))+
+  geom_histogram()
+```
+## Check data
+
+Near zero variance columns
+```{r}
+nz_cols = nearZeroVar(train)
+train[,nz_cols]
+```
+
+#train processed
+```{r}
+train_processed = train[,-nz_cols] %>%
+  select(-Id) %>%
+  mutate(MSZoning = factor(MSZoning)) %>%
+  mutate(LotFrontage = coalesce(LotFrontage, 0)) %>%
+  mutate(LotArea = as.numeric(LotArea)) %>%
+  mutate(Alley = factor(coalesce(Alley, 'None'))) %>%
+  mutate(LotShape = factor(LotShape)) %>%
+  mutate(LotConfig = factor(LotConfig)) %>%
+  mutate(Neighborhood = fct_lump(Neighborhood, 8)) %>%
+  mutate(Condition1 = fct_lump(Condition1, 5)) %>%
+  mutate(BldgType = factor(BldgType)) %>%
+  mutate(HouseStyle = fct_lump(HouseStyle, 5)) %>%
+  mutate(OverallQual = factor(OverallQual),
+         OverallCond = factor(OverallCond)) %>%
+  mutate(RoofStyle = factor(RoofStyle)) %>%
+  mutate(Exterior1st = fct_lump(coalesce(Exterior1st,'Other'),6)) %>%
+  mutate(Exterior2nd = fct_lump(coalesce(Exterior2nd,'Other'),6)) %>%
+  mutate(MasVnrType = factor(coalesce(MasVnrType, 'None'))) %>%
+  mutate(MasVnrArea = coalesce(MasVnrArea, 0)) %>%
+  mutate(ExterQual = factor(ExterQual),
+         ExterCond = factor(ExterCond),
+         Foundation = factor(Foundation)) %>%
+  mutate(BsmtQual = case_when(
+    BsmtQual == 'Ex' ~ 100,
+    BsmtQual == 'Gd' ~ 90,
+    BsmtQual == 'TA' ~ 80,
+    BsmtQual == 'Fa' ~ 70,
+    BsmtQual == 'Po' ~ 50,
+    TRUE ~ 0
+  )) %>%
+  mutate(BsmtExposure = factor(coalesce(BsmtExposure,'No'))) %>%
+  mutate(BsmtFinType1 = fct_lump(coalesce(BsmtFinType1,'None'),5)) %>%
+  mutate(BsmtFinSF1 = coalesce(BsmtFinSF1, 0)) %>%
+  mutate(BsmtUnfSF = coalesce(BsmtUnfSF, 0)) %>%
+  mutate(TotalBsmtSF = coalesce(TotalBsmtSF, 0)) %>%
+  mutate(HeatingQC = factor(HeatingQC))%>%
+  mutate(CentralAir = factor(CentralAir)) %>%
+  mutate(Electrical = fct_lump(coalesce(Electrical,'Mix'),3)) %>%
+  mutate(BsmtFullBath = factor(coalesce(BsmtFullBath,0)))%>%
+  mutate(HalfBath = factor(coalesce(HalfBath,0))) %>%
+  mutate(BsmtHalfBath = coalesce(BsmtHalfBath,0)) %>%
+  mutate(KitchenQual = factor(coalesce(KitchenQual,'Gd'))) %>%
+  mutate(FireplaceQu = factor(coalesce(FireplaceQu,'None'))) %>%
+  mutate(GarageType = factor(coalesce(GarageType, 'None'))) %>%
+  select(-GarageYrBlt) %>%
+  mutate(GarageFinish = factor(coalesce(GarageFinish,'None'))) %>%
+  mutate(PavedDrive = factor(PavedDrive))%>%
+  mutate(PoolQC = fct_lump(coalesce(PoolQC,'None'),2)) %>%
+  mutate(Fence = factor(coalesce(Fence, 'None'))) %>%
+   mutate(MoSold = factor(MoSold),
+         SaleCondition = factor(SaleCondition)) %>%
+  mutate(SaleType = fct_lump(coalesce(SaleType,'Oth'),3)) %>%
+  mutate(GarageArea = coalesce(GarageArea, 0)) %>%
+  mutate(GarageCars = coalesce(GarageCars,0))
+  
+```
+
+
+
+#Convert test data
+```{r}
+test_processed = test[-nz_cols] %>%
+  select(-Id) %>%
+  mutate(MSZoning = factor(coalesce(MSZoning, 'RL'))) %>%
+  mutate(LotFrontage = coalesce(LotFrontage, 0)) %>%
+  mutate(LotArea = as.numeric(LotArea)) %>%
+  mutate(Alley = factor(coalesce(Alley, 'None'))) %>%
+  mutate(LotShape = factor(LotShape)) %>%
+  mutate(LotConfig = factor(LotConfig)) %>%
+  mutate(Neighborhood = fct_lump(Neighborhood,8)) %>%
+  mutate(Condition1 = fct_lump(Condition1, 5)) %>%
+  mutate(BldgType = factor(BldgType)) %>%
+  mutate(HouseStyle = fct_lump(HouseStyle, 5)) %>%
+  mutate(OverallQual = factor(OverallQual),
+         OverallCond = factor(OverallCond)) %>%
+  mutate(RoofStyle = factor(RoofStyle)) %>%
+  mutate(Exterior1st = fct_lump(coalesce(Exterior1st,'Other'),6)) %>%
+  mutate(Exterior2nd = fct_lump(coalesce(Exterior2nd,'Other'),6)) %>%
+  mutate(MasVnrType = factor(coalesce(MasVnrType, 'None'))) %>%
+  mutate(MasVnrArea = coalesce(MasVnrArea, 0)) %>%
+  mutate(ExterQual = factor(ExterQual),
+         ExterCond = factor(ExterCond),
+         Foundation = factor(Foundation)) %>%
+  mutate(BsmtQual = case_when(
+    BsmtQual == 'Ex' ~ 100,
+    BsmtQual == 'Gd' ~ 90,
+    BsmtQual == 'TA' ~ 80,
+    BsmtQual == 'Fa' ~ 70,
+    BsmtQual == 'Po' ~ 50,
+    TRUE ~ 0
+  )) %>%
+  mutate(BsmtExposure = factor(coalesce(BsmtExposure,'No'))) %>%
+  mutate(BsmtFinType1 = fct_lump(coalesce(BsmtFinType1,'None'),5)) %>%
+  mutate(BsmtFinSF1 = coalesce(BsmtFinSF1, 0)) %>%
+  mutate(BsmtUnfSF = coalesce(BsmtUnfSF, 0)) %>%
+  mutate(TotalBsmtSF = coalesce(TotalBsmtSF, 0)) %>%
+  mutate(HeatingQC = factor(HeatingQC)) %>%
+  mutate(CentralAir = factor(CentralAir)) %>%
+  mutate(Electrical = fct_lump(coalesce(Electrical,'Mix'),3)) %>%
+  mutate(BsmtFullBath = factor(coalesce(BsmtFullBath,0))) %>%
+  mutate(HalfBath = factor(coalesce(HalfBath,0))) %>%
+  mutate(BsmtHalfBath = coalesce(BsmtHalfBath,0)) %>%
+  mutate(KitchenQual = factor(coalesce(KitchenQual,'Gd'))) %>%
+  mutate(FireplaceQu = factor(coalesce(FireplaceQu,'None'))) %>%
+  mutate(GarageType = factor(coalesce(GarageType, 'None'))) %>%
+  select(-GarageYrBlt) %>%
+  mutate(GarageFinish = factor(coalesce(GarageFinish,'None'))) %>%
+  mutate(PavedDrive = factor(PavedDrive)) %>%
+  mutate(PoolQC = fct_lump(coalesce(PoolQC,'None'),2)) %>%
+  mutate(Fence = factor(coalesce(Fence, 'None'))) %>%
+   mutate(MoSold = factor(MoSold),
+         SaleCondition = factor(SaleCondition)) %>%
+  mutate(SaleType = fct_lump(coalesce(SaleType,'Oth'),3)) %>%
+  mutate(GarageArea = coalesce(GarageArea, 0))  %>%
+  mutate(GarageCars = coalesce(GarageCars,0))
+
+```
+
+ 
+#check if there are other missing
+```{r}
+test_missing = map_dbl(test_processed, function(x) sum(is.na(x)))
+train_missing = map_dbl(train_processed, function(x) sum(is.na(x)))
+train_missing[train_missing !=0]
+print('---')
+test_missing[test_missing !=0]
+
+```
+# Further_processing
+```{r}
+train_x = train_processed %>%
+  select(-SalePrice)
+
+train_y = train_processed$SalePrice
+```
+
+
+# Remove high correlation in numeric
+```{r}
+nz_cols = nearZeroVar(train_x)
+train_x = train_x[,-nz_cols]
+test_processed = test_processed[,-nz_cols]
+```
+
+
+```{r}
+nums <- unlist(lapply(train_x, is.numeric)) 
+names_nums = nums[nums == T] %>%
+  names()
+
+numeric_train = train_x[,names_nums]
+high_cor = findCorrelation(cor(numeric_train), cutoff = .7)
+high_cor = names(numeric_train)[high_cor]
+train_x = train_x %>%
+  select(-high_cor)
+test_processed = test_processed %>%
+  select(-high_cor)
+```
+#parallel computing
+
+```{r}
+library(doParallel)
+cl = makeCluster(8)
+registerDoParallel(cl)
+
+```
+
+#train gbm model
+```{r}
+gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+                       n.trees = seq(100, 1000, by = 50),
+                       shrinkage = c(0.01, 0.1),
+                       n.minobsinnode = 10)
+set.seed(100)
+gbmTune <- train(x = train_x, y = train_y,
+                 method = "gbm",
+                 tuneGrid = gbmGrid,
+                 verbose = FALSE)
+gbmTune
+```
+
+#check RMSE
+```{r}
+RMSE(predict(gbmTune), train_y)
+```
+
+```{r}
+preds = predict(gbmTune, test_processed)
+submission %>%
+  mutate(SalePrice = preds) %>%
+  write_csv('my_submission.csv')
+```
+
+
+```{r}
+numeric_train = map_lgl(train_x, is.numeric)
+numeric_names = numeric_train[numeric_train == T] %>%
+  names()
+
+numeric_train = train_x[,numeric_names]
+```
+
+# use another method
+```{r}
+library(e1071)
+map_dbl(numeric_train, skewness)
+```
+
+
+#transform test
+```{r}
+trans = preProcess(train_x, method = c('BoxCox','center','scale'))
+transformed_train_x = predict(trans, train_x)
+```
+
+#transform train
+```{r}
+trans = preProcess(test_processed, method = c('BoxCox','center','scale'))
+transformed_test= predict(trans, test_processed)
+```
+
+#gbm mode
+```{r}
+gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+                       n.trees = seq(100, 1000, by = 50),
+                       shrinkage = c(0.01, 0.1),
+                       n.minobsinnode = 10)
+set.seed(100)
+gbmTune <- train(x = transformed_train_x, y = train_y,
+                 method = "gbm",
+                 tuneGrid = gbmGrid,
+                 verbose = FALSE)
+gbmTune
+```
+```{r}
+preds = predict(gbmTune, transformed_test)
+submission = read_csv('sample_submission.csv')
+
+submission %>%
+  mutate(SalePrice = preds) %>%
+  write_csv('gbm_trans.csv')
+```
+
+#try random forest
+
+#convert to character
+```{r}
+train_x = data.frame(lapply(train_x, as.character), stringsAsFactors=FALSE)
+train_y
+```
+
+#convert to character
+```{r}
+test_processed = data.frame(lapply(test_processed, as.character), stringsAsFactors=FALSE)
+```
+
+
+#create random forest tune
+```{r}
+mtryGrid <- data.frame(mtry = floor(seq(10, ncol(train_x), length = 8)))
+
+set.seed(100)
+rfTune <- train(x = train_x, y = train_y,
+                method = "rf",
+                tuneGrid = mtryGrid,
+                ntree = 500)
+rfTune
+
+plot(rfTune)
+```
+
+#write to csv
+```{r}
+preds = predict(rfTune, test_processed)
+submission = read_csv('sample_submission.csv')
+submission %>%
+  mutate(SalePrice = preds) %>%
+  write_csv('rf.csv')
+```
+
+
+
+
+
+
+
+
+
+
