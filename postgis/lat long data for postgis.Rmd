@@ -1,0 +1,127 @@
+---
+title: "Extracting data for postgis"
+author: "Me"
+date: "1/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Load query
+```{r}
+query = "{\"size\": 5000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"bool\": {\"filter\": [{\"bool\": {\"should\": [{\"match_phrase\": {\"group_names\": \"Webcast\"}}], \"minimum_should_match\": 1}}]}}, {\"match_phrase\": {\"plateno\": \"B6J479\"}}, {\"range\": {\"datestamp\": {\"gte\": \"2021-01-04T16:00:00.000Z\", \"lte\": \"2021-01-07T15:59:59.000Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+```
+
+Establish connection and load libraries
+
+```{r}
+library(elastic)
+library(elasticsearchr)
+library(jsonlite)
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(data.table)
+library(lubridate)
+library(getPass)
+
+conn = connect(
+host = "tmsuite-elasticsearch.trackme.com.ph",
+port = 443,
+path = NULL,
+transport_schema = "https",
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
+headers = NULL,
+cainfo = NULL,
+force = FALSE,
+errors = "simple",
+warn = TRUE
+)
+```
+
+
+Get the data
+```{r}
+d1 = Search(conn, index = 'tmsuite_triplogs_20*', body = query, , raw = TRUE)
+```
+
+Process the data
+```{r}
+d1 = fromJSON(d1)
+d1 = as.data.table(d1$hits$hits$`_source`)
+```
+
+
+```{r}
+d1 = d1 %>%
+      select(gps_received, group_names,  location.lon, location.lat, alert_codes)
+```
+
+```{r}
+d1 %>%
+      unnest(group_names) %>%
+      distinct(group_names)
+```
+
+
+```{r}
+
+
+d1 %>%
+      select(gps_received, location.lon, location.lat) %>%
+      write_csv('sample_gps_data.csv')
+```
+
+```{r}
+data = d1 %>%
+      select(gps_received, location.lon, location.lat) %>%
+      mutate(gps_received = ymd_hms(gps_received))
+```
+
+```{r}
+data = data %>%
+      rename(lon = location.lon, 
+             lat = location.lat)
+```
+
+
+Establish connection
+```{r}
+
+pgdrv <- dbDriver(drvName = "PostgreSQL")
+postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="postgres",
+                    host="localhost", port=5432,
+                    user = 'postgres',
+                    password = getPass("Enter Password:"))
+
+dbWriteTable(postgrescon, "gps_staging", data, row.names=FALSE, append=TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

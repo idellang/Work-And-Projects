@@ -1,0 +1,51 @@
+---
+title: "Nestle Trips"
+author: "Me"
+date: "1/29/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+```
+
+Establish Connection
+```{r}
+
+pgdrv <- dbDriver(drvName = "PostgreSQL")
+postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="postgres",
+                    host="localhost", port=5432,
+                    user = 'postgres',
+                    password = getPass("Enter Password:"))
+```
+
+
+Process data
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

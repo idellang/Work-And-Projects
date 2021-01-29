@@ -12,6 +12,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #install elastic search
 #load libraries
+
+
+#connect to server
 ```{r}
 library(elastic)
 library(elasticsearchr)
@@ -21,18 +24,15 @@ library(tidyr)
 library(broom)
 library(data.table)
 library(lubridate)
-```
+library(getPass)
 
-
-#connect to server
-```{r}
 conn = connect(
 host = "tmsuite-elasticsearch.trackme.com.ph",
 port = 443,
 path = NULL,
 transport_schema = "https",
-user = 'user',
-pwd = 'pass',
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
 headers = NULL,
 cainfo = NULL,
 force = FALSE,
@@ -264,14 +264,16 @@ library(tidyverse)
 library(tidyr)
 library(broom)
 library(data.table)
+library(lubridate)
+library(getPass)
 
 conn = connect(
 host = "tmsuite-elasticsearch.trackme.com.ph",
 port = 443,
 path = NULL,
 transport_schema = "https",
-user = 'user',
-pwd = 'password',
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
 headers = NULL,
 cainfo = NULL,
 force = FALSE,

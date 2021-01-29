@@ -49,7 +49,7 @@ ON CREATE SET
 -- sample queries
 	
 MATCH trip = ((:Location)-[t:TRIP]-(:Location))
-WHERE t.trip_number = 7300157069
+WHERE t.trip_number = 7300108519
 RETURN trip
 
 --trips on nov 8
@@ -59,7 +59,7 @@ RETURN trip
 
 --trip for plate no 
 MATCH trip = ((:Location)-[t:TRIP]-(:Location))
-WHERE t.plate_no = 'CAG 1537'
+WHERE t.plate_no = 'CAE4687'
 RETURN trip
 
 --all trips
@@ -72,6 +72,47 @@ WITH t.trip_number AS trip
 MATCH path = ((:Location)-[t:TRIP]-(:Location))
 WHERE t.trip_number IN trip
 RETURN path
+
+--dates of trip number 8519
+MATCH trip = ((d1:Location)-[t:TRIP]-(d2:Location))
+WHERE t.trip_number = 7300108519
+RETURN d1.name AS location, d2.name AS next_location, t.month, t.day, t.dropoff_order
+
+--number of trips on a on november 7
+MATCH trip = ((:Location)-[t:TRIP]-(:Location))
+RETURN t.month, t.day, count(trip)
+ORDER BY t.month, t.day
+
+--distinct trips
+MATCH trip = ((:Location)-[t:TRIP]-(:Location))
+WHERE t.month = 11 AND t.day = 7
+RETURN count(DISTINCT t.trip_number)
+
+--location with most number of travels
+MATCH trip = ((d1:Location)-[t:TRIP]->(d2:Location))
+RETURN d2.name, COUNT(t.trip_number),  collect(distinct t.trip_number) AS trips,  collect(d1.name) AS previous_locations
+ORDER BY COUNT(t.trip_number) DESC 
+
+-- tabular detail
+MATCH trip = ((d1:Location)-[t:TRIP]->(d2:Location))
+WHERE t.trip_number = 7300108519
+RETURN t.trip_number, d1.name, d2.name, t.travel_distance
+
+--distance traveled per trip
+MATCH trip = ((d1:Location)-[t:TRIP]->(d2:Location))
+WITH  t.trip_number AS trip_number, SUM(t.travel_distance) as travel_distance
+RETURN trip_number, travel_distance
+ORDER BY travel_distance DESC
+
+-- trip number, distance traveled, and locations passed
+MATCH trip = ((d1:Location)-[t:TRIP]->(d2:Location))
+WITH t.trip_number AS trip_number, t.travel_distance AS travel_distance, d1.name AS source, d2.name AS destination
+WITH trip_number, SUM(travel_distance) AS total_distance, collect(source) + collect(destination) AS locations
+WITH trip_number, total_distance, locations
+UNWIND locations AS location
+RETURN trip_number, total_distance, collect(distinct location)
+ORDER BY total_distance DESC
+
 
 
 --load second model
@@ -90,5 +131,21 @@ ON CREATE SET
     t.status = line.dropoff_status
 
 	
+MATCH trip = ((:Location)-[t:TRIP]-(:Location))
+WITH DATE(t.date) AS date, t.trip_number AS trip_number
+RETURN trip_number, date, date.month, date.year, date.day
+
     
-   
+   MATCH trip = ((:Location)-[t:TRIP]-(:Location))
+WHERE t.date.month = 10 AND t.date.day = 26
+RETURN trip
+
+
+
+-- first and last elements
+MATCH trip = ((:Location)-[t:TRIP]->(:Location))
+WHERE t.trip_number = 7300108519
+WITH nodes(trip) AS locations
+UNWIND locations as location
+WITH collect(location.name) AS locations
+RETURN locations[0],locations[-1]

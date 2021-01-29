@@ -1,0 +1,152 @@
+---
+title: "Nestle Data"
+author: "Me"
+date: "1/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+
+```{r}
+library(elastic)
+library(elasticsearchr)
+library(jsonlite)
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(data.table)
+library(lubridate)
+library(getPass)
+
+conn = connect(
+host = "tmsuite-elasticsearch.trackme.com.ph",
+port = 443,
+path = NULL,
+transport_schema = "https",
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
+headers = NULL,
+cainfo = NULL,
+force = FALSE,
+errors = "simple",
+warn = TRUE
+)
+```
+
+
+Get data
+```{r}
+query=  "{\"size\": 300, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"nested\": {\"path\": \"pickups\", \"query\": {\"bool\": {\"should\": [{\"exists\": {\"field\": \"pickups.actual_arrival\"}}], \"minimum_should_match\": 1}}, \"score_mode\": \"none\"}}, {\"match_phrase\": {\"group_names\": \"Nestle\"}}, {\"range\": {\"created\": {\"gte\": \"2020-12-05T05:03:55.041Z\", \"lte\": \"2021-01-04T05:03:55.041Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+nestle_data = Search(conn, index = 'tmsuite_booking*', body = query, , raw = TRUE)
+
+nestle = fromJSON(nestle_data)
+
+nestle_source = nestle$hits$hits$`_source`
+
+nestle_data = nestle_source %>%
+      as.data.table()
+
+head(nestle_data)
+```
+
+```{r}
+nestle_data = nestle_data %>%
+   select(trip_number, vehicle_plate_no, dropoffs, pickups)
+
+
+nestle_data = nestle_data %>%
+   unnest_wider(dropoffs,names_repair = tidyr_legacy) %>%
+   unnest_wider(pickups, names_repair =  tidyr_legacy)
+
+nestle_data = nestle_data %>%
+   mutate(trip_number = trip_number, 
+          vehicle_plate_no = vehicle_plate_no, 
+          dropoff_status = status_code,
+          dropoff_location = name,
+          dropoff_arrival = coalesce(actual_arrival, arrival),
+          pickup_status = status_code1,
+          pickup_location = name1,
+          pickup_arrival = coalesce(actual_arrival1, arrival1),
+          .keep =  'none')
+
+```
+
+- Select cols
+- distinct values
+```{r}
+
+nestle_data = nestle_data %>%
+   select(trip_number, pickup_location,dropoff_status, dropoff_location , pickup_arrival, dropoff_arrival, vehicle_plate_no)
+
+nestle_data = nestle_data %>% distinct()
+
+#dhl2 = dhl2 %>%
+#   distinct(pickup_location, dropoff_location, .keep_all = T)
+```
+
+- convert data
+- add rank
+- change pickup to be zero
+- add next location and dropoff series
+- add month and day
+
+```{r}
+nestle_data = nestle_data %>% 
+   mutate(trip_number = parse_number(trip_number),
+          pickup_arrival = ymd_hms(pickup_arrival),
+          dropoff_arrival = ymd_hms(dropoff_arrival)) %>%
+   group_by(trip_number) %>%
+   mutate(dropoff_series =rank(dropoff_arrival, ties.method = 'first'))
+
+nestle_gather = nestle_data %>%
+    gather(key = 'logistic_type', 'location', pickup_location, dropoff_location) %>%
+    group_by(trip_number) %>%
+   distinct(location, .keep_all = T) %>%
+   group_by(trip_number) %>%
+   add_count() %>%
+   arrange(desc(n), trip_number, desc(logistic_type))
+
+nestle_gather = nestle_gather %>%
+   mutate(dropoff_series = ifelse(logistic_type== 'pickup_location',0, dropoff_series)) %>%
+   select(-n)
+
+nestle_gather = nestle_gather %>%
+   select(trip_number, location, dropoff_series, logistic_type, everything())
+
+nestle_gather = nestle_gather %>%
+   mutate(next_location = lead(location)) %>%
+   select(trip_number, location, next_location, dropoff_series, logistic_type, dropoff_arrival, everything()) %>%
+   mutate(dropoff_series = lead(dropoff_series)) %>%
+   filter(!is.na(next_location))
+
+nestle_final = nestle_gather %>%
+   mutate(month = month(dropoff_arrival),
+          day = mday(dropoff_arrival)) %>%
+   select(-dropoff_arrival, -logistic_type, -pickup_arrival)
+```
+
+```{r}
+write_csv(nestle_final, 'nestle_data.csv')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

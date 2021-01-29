@@ -1,0 +1,417 @@
+---
+title: "Triplogs data"
+author: "Me"
+date: "1/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Exploration of triplogs data
+
+Load libraries and establish connection
+```{r}
+library(elastic)
+library(elasticsearchr)
+library(jsonlite)
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(data.table)
+library(lubridate)
+library(getPass)
+
+conn = connect(
+host = "tmsuite-elasticsearch.trackme.com.ph",
+port = 443,
+path = NULL,
+transport_schema = "https",
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
+headers = NULL,
+cainfo = NULL,
+force = FALSE,
+errors = "simple",
+warn = TRUE
+)
+```
+
+Get data
+
+```{r}
+query = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"multi_match\": {\"type\": \"best_fields\", \"query\": \"Entered left\", \"lenient\": \"true\"}}, {\"match_phrase\": {\"group_names\": \"DHL\"}}, {\"range\": {\"datestamp\": {\"gte\": \"2020-12-29T07:08:20.254Z\", \"lte\": \"2021-01-05T07:08:20.254Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+
+data = Search(conn, index = 'tmsuite_triplogs_20*', body = query, , raw = TRUE)
+
+data = fromJSON(data)
+
+data = as.data.table(data$hits$hits$`_source`)
+```
+
+Data manipulation. Remove and clean unnested data
+
+```{r}
+
+unnested = data %>%
+      unnest(group_names) %>%
+      group_by(gps_received, creator, device_id, plateno) %>%
+      mutate(group_names = paste(group_names, collapse = ',')) %>%
+      distinct() %>%
+      unnest(group_ids) %>%
+      group_by(gps_received, creator, device_id, plateno) %>%
+      mutate(group_ids = paste(group_ids, collapse = ',')) %>%
+      distinct()
+
+unnested = unnested %>%
+      unnest(alert_ids) %>%
+      unnest(alert_msgs) %>%
+      unnest(alert_codes, keep_empty = TRUE)
+
+unnested = unnested %>%
+      mutate(gps_received = ymd_hms(gps_received),
+             created = ymd_hms(created),
+             datestamp = ymd_hms(datestamp),
+             modified = ymd_hms(modified))
+
+triplog_dhl = unnested %>%
+      as_tibble() %>%
+      select(gps_received, device_id, plateno, group_names, alert_ids, datestamp, group_ids,modified, alert_msgs, alert_codes, location.lon, location.lat)
+```
+
+Separate location and alert
+```{r}
+triplog_dhl = triplog_dhl %>%
+      separate(alert_msgs, into = c('alert','location'), sep = ' ', extra = 'merge', fill = 'right') %>%
+      mutate(alert = ifelse(alert == 'Left' | alert == 'Entered', alert, paste(alert, location))) %>%
+      mutate(location = ifelse(alert == 'Left' | alert == 'Entered', location, NA))
+
+triplog_dhl = triplog_dhl %>%
+      arrange(gps_received)
+
+triplog_dhl %>%
+      write_csv('triplog_dhl.csv')
+```
+
+```{r}
+triplog_dhl = read_csv('triplog_dhl.csv')
+head(triplog_dhl)
+```
+
+```{r}
+#get distinct locations and time
+triplog_dhl = triplog_dhl %>%
+   distinct(gps_received, datestamp, modified, location, .keep_all = TRUE)
+```
+
+## Get bookings data
+
+```{r}
+query = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"match_all\": {}}, {\"match_phrase\": {\"group_names\": \"DHL\"}}, {\"range\": {\"created\": {\"gte\": \"2020-12-29T07:15:08.383Z\", \"lte\": \"2021-01-05T07:15:08.383Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+
+data = Search(conn, index = 'tmsuite_booking*', body = query, , raw = TRUE)
+
+dhl_data = fromJSON(data)
+
+dhl_data = dhl_data$hits$hits$`_source`
+
+
+head(dhl_data)
+```
+
+```{r}
+dhl_data = dhl_data %>%
+   select(trip_number, vehicle_plate_no, dropoffs, pickups)
+
+
+dhl_data = dhl_data %>%
+   unnest_wider(dropoffs,names_repair = tidyr_legacy) %>%
+   unnest_wider(pickups, names_repair =  tidyr_legacy)
+
+dhl_data = dhl_data %>%
+   mutate(trip_number = trip_number, 
+          vehicle_plate_no = vehicle_plate_no, 
+          dropoff_status = status_code,
+          dropoff_location = name,
+          dropoff_arrival = coalesce(actual_arrival, arrival),
+          pickup_status = status_code1,
+          pickup_location = name1,
+          pickup_arrival = coalesce(actual_arrival1, arrival1),
+          .keep =  'none')
+```
+
+```{r}
+dhl_data = dhl_data %>%
+   select(trip_number, pickup_location,dropoff_status, dropoff_location , pickup_arrival, dropoff_arrival, vehicle_plate_no)
+
+dhl_data = dhl_data %>% distinct()
+```
+```{r}
+dhl_data = dhl_data %>%
+    gather(key = 'logistic_type', 'location', pickup_location, dropoff_location) %>%
+    group_by(trip_number) %>%
+   distinct(location, .keep_all = T) %>%
+   group_by(trip_number) %>%
+   add_count() %>%
+   arrange(desc(n), trip_number, desc(logistic_type))
+
+
+dhl_data = dhl_data %>%
+      mutate(arrival = ifelse(logistic_type == 'pickup_location', pickup_arrival, dropoff_arrival)) %>%
+      select(-pickup_arrival, -dropoff_arrival)
+
+dhl_data = dhl_data %>% 
+   mutate(arrival = ymd_hms(arrival)) %>%
+   group_by(trip_number) %>%
+   mutate(dropoff_series =rank(arrival, ties.method = 'first'))
+
+
+
+
+dhl_data = dhl_data %>%
+   select(trip_number, location, dropoff_series, logistic_type, everything())
+
+dhl_data = dhl_data %>%
+      arrange(desc(n), trip_number,dropoff_series)
+
+dhl_data = dhl_data %>%
+   mutate(next_location = lead(location),
+          dropoff_series = lag(dropoff_series)) %>%
+   select(trip_number, location, next_location, dropoff_series, logistic_type, arrival, everything()) %>%
+   mutate(dropoff_series = lead(dropoff_series)) %>%
+   filter(!is.na(next_location))
+
+dhl_final = dhl_data %>%
+   mutate(month = month(arrival),
+          day = mday(arrival)) %>%
+   select( -logistic_type, -n)
+
+dhl_bookings = dhl_final
+```
+
+
+## Check commonality between two data
+```{r}
+distinct_vehicles_bookings = dhl_bookings %>%
+   ungroup()%>%
+   distinct(vehicle_plate_no) %>%
+   arrange(vehicle_plate_no)
+
+distinct_vehicles_bookings
+```
+
+```{r}
+distinct_vehicles_triplogs = triplog_dhl %>%
+   ungroup()%>%
+   distinct(plateno) %>%
+   arrange(plateno)
+```
+
+```{r}
+intersect(distinct_vehicles_triplogs$plateno, distinct_vehicles_bookings$vehicle_plate_no) %>%
+   length()
+```
+
+There are 308 common values
+
+
+Check the locations for those with triplogs and their supposed locations
+
+```{r}
+triplog_dhl = triplog_dhl %>%
+   select(log_location = location, everything())
+```
+
+
+```{r}
+merged = triplog_dhl %>%
+   full_join(dhl_bookings, by = c('plateno' = 'vehicle_plate_no', 'log_location' = 'location'), keep = TRUE) %>%
+   select(log_location, booked_location = location, gps_received, 
+          log_plate_no = plateno,
+          booked_plate_no = vehicle_plate_no, arrival, trip_number, group_names)
+```
+
+
+```{r}
+merged = merged %>%
+   select(log_location, booked_location, log_plate_no,booked_plate_no, gps_received, arrival, everything())
+
+merged = merged %>%
+   mutate(time_difference = ifelse(booked_location == log_location, gps_received - arrival, NA))
+
+```
+Get time difference
+```{r}
+merged = merged %>%
+   mutate(time_difference = as.period(as.duration(time_difference)))
+```
+
+```{r}
+ merged = merged %>%
+   mutate(duration = as.duration(time_difference))
+```
+
+Save merged CSV file
+```{r}
+merged %>%
+   write_csv('merged_logs_bookings.csv')
+```
+
+Open merged csv
+```{r}
+library(tidyverse)
+merged =  read_csv('merged_logs_bookings.csv')
+```
+
+```{r}
+merged %>%
+   filter(log_plate_no == 'AAQ 9801') %>%
+   arrange(gps_received)
+```
+
+
+#With bookings but no logs
+
+```{r}
+merged %>%
+   filter(!is.na(booked_location), is.na(log_location))
+```
+
+Checked for entries where booked location = logged location
+```{r}
+merged %>%
+   filter(log_location == booked_location) %>%
+   arrange(log_plate_no, booked_plate_no, duration)
+```
+
+Can filter using duration
+
+```{r}
+merged %>%
+   filter(duration > duration(weeks = 2))
+```
+536 records where booked location is visited within the day
+
+
+## Summary steps
+Using triplogs data
+- unnested nested values
+- extracted location
+
+Using bookings data
+- obtained location and location details from dropoffs and pickups columns
+
+Merged data
+- combined the data using plate number and location to match
+- full outer join was used to fill data with NA for missing matches
+
+Ways to filter or match
+- using time difference. There will be entries where in vehicle and location is the same but the time interval for logs and booked 
+  is high
+- check if log location matches booked location
+
+
+### Check for booked location with some visited but not all
+
+```{r}
+booked_not_visited = merged %>%
+   filter(!is.na(booked_location), is.na(log_location))
+
+booked_travels_with_missing_locations = merged %>%
+   semi_join(booked_not_visited, by = 'trip_number')
+```
+
+```{r}
+incomplete_trips = booked_travels_with_missing_locations %>%
+   filter(!is.na(log_location)) %>%
+   .$trip_number
+
+booked_travels_with_missing_locations %>%
+   filter(trip_number %in% incomplete_trips) %>%
+   arrange(trip_number)
+```
+
+## Explore further
+Get data
+
+```{r}
+query = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"multi_match\": {\"type\": \"best_fields\", \"query\": \"Entered left\", \"lenient\": \"true\"}}, {\"match_phrase\": {\"group_names\": \"DHL\"}}, {\"range\": {\"datestamp\": {\"gte\": \"2020-12-29T07:08:20.254Z\", \"lte\": \"2021-01-05T07:08:20.254Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+
+data = Search(conn, index = 'tmsuite_triplogs_20*', body = query, , raw = TRUE)
+
+data = fromJSON(data)
+
+data = as.data.table(data$hits$hits$`_source`)
+```
+
+Data manipulation. Remove and clean unnested data
+
+```{r}
+
+unnested = data %>%
+      unnest(group_names) %>%
+      group_by(gps_received, creator, device_id, plateno) %>%
+      mutate(group_names = paste(group_names, collapse = ',')) %>%
+      distinct() %>%
+      unnest(group_ids) %>%
+      group_by(gps_received, creator, device_id, plateno) %>%
+      mutate(group_ids = paste(group_ids, collapse = ',')) %>%
+      distinct()
+
+unnested = unnested %>%
+      unnest(alert_ids) %>%
+      unnest(alert_msgs) %>%
+      unnest(alert_codes, keep_empty = TRUE)
+
+unnested = unnested %>%
+      mutate(gps_received = ymd_hms(gps_received),
+             created = ymd_hms(created),
+             datestamp = ymd_hms(datestamp),
+             modified = ymd_hms(modified))
+
+triplog_dhl = unnested %>%
+      as_tibble() %>%
+      select(gps_received, device_id, plateno, group_names, alert_ids, datestamp, group_ids,modified, alert_msgs, alert_codes, location.lon, location.lat)
+```
+
+
+```{r}
+triplog_dhl %>%
+   group_by(date(gps_received)) %>%
+   add_count() %>%
+   ggplot(aes(date(gps_received), n))+
+   geom_line(size = 2, color = 'steelblue')
+```
+
+```{r}
+triplog_dhl %>% 
+   count(alert_codes) %>%
+   arrange(desc(n))
+```
+
+```{r}
+triplog_dhl %>%
+    separate(alert_msgs, into = c('alert','location'), sep = ' ', extra = 'merge', fill = 'right') %>%
+      mutate(alert = ifelse(alert == 'Left' | alert == 'Entered', alert, paste(alert, location))) %>%
+      mutate(location = ifelse(alert == 'Left' | alert == 'Entered', location, NA)) %>%
+   group_by(location) %>%
+   summarise(count = n()) %>%
+   arrange(desc(count)) %>%
+   filter(!is.na(location)) %>%
+   head(15) %>%
+   ggplot(aes(x = reorder(location, count), y = count))+
+      geom_col(aes(fill = location))+
+   coord_flip()+
+   theme(legend.position = 'none')+
+   labs(title = 'top 15 locations')
+```
+
+
+
+
+
+
