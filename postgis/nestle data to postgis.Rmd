@@ -14,6 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(RPostgreSQL)
 library(getPass)
+library(lubridate)
 ```
 
 Establish Connection
@@ -21,7 +22,7 @@ Establish Connection
 
 pgdrv <- dbDriver(drvName = "PostgreSQL")
 postgrescon <-DBI::dbConnect(pgdrv,
-                    dbname="postgres",
+                    dbname="WTI",
                     host="localhost", port=5432,
                     user = 'postgres',
                     password = getPass("Enter Password:"))
@@ -30,9 +31,20 @@ postgrescon <-DBI::dbConnect(pgdrv,
 
 Process data
 ```{r}
+data = read_csv('GPS-DATA.csv')
 
+data = data %>%
+      filter(str_detect(alert_msgs, 'Invalid', negate = TRUE))
+
+data = data %>%
+      mutate(datestamp = mdy_hms(datestamp)) %>%
+      select(-alert_msgs)
 ```
 
+Upload data to postgresql
+```{r}
+dbWriteTable(postgrescon, "nestle_staging", data, row.names=FALSE, append=TRUE)
+```
 
 
 

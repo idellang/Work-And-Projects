@@ -1,0 +1,243 @@
+---
+title: "Titanic3"
+author: "Me"
+date: "1/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+library(ggplot2)
+theme_set(theme_light())
+```
+
+
+```{r}
+train = read_csv('train.csv')
+test = read_csv('test.csv')
+
+dim(train)
+dim(test)
+head(train)
+```
+
+Check structure
+```{r}
+str(train)
+str(test)
+```
+
+
+# Preprocess
+```{r}
+nearZeroVar(train)
+```
+
+Check number of missing
+```{r}
+map_dbl(train %>% select(-Survived), function(x) sum(is.na(x)))
+map_dbl(test, function(x) sum(is.na(x)))
+```
+
+Train
+- 177 age
+- 687 cabin
+- 2 Embarked
+Test
+- 86 age
+- 1 Fare
+- 327 cabin
+
+```{r}
+train = train %>%
+  select(-PassengerId, -Name, -Ticket) %>%
+  mutate(Survived = as.factor(Survived),
+         Pclass = as.factor(Pclass),
+         Sex = as.factor(Sex),
+         Embarked = as.factor(Embarked)) %>%
+  mutate(Cabin = factor(ifelse(!is.na(Cabin), 1, 0))) %>%
+      mutate(Sex = as.factor(ifelse(Sex == 'male', 1, 0)))
+
+train
+```
+
+```{r}
+impute_preprocess = preProcess(as.data.frame(train), method = 'knnImpute')
+train_model = predict(impute_preprocess, as.data.frame(train))
+```
+
+```{r}
+map_dbl(train_model %>% select(-Survived), function(x) sum(is.na(x)))
+```
+```{r}
+train_model[is.na(train_model %>% select(Embarked)),'Embarked'] = 'S'
+```
+
+Train model is now finished
+
+```{r}
+train_model
+```
+
+Create test model
+```{r}
+test_model = test%>%
+  select(-PassengerId, -Name, -Ticket) %>%
+  mutate(Pclass = as.factor(Pclass),
+         Sex = as.factor(Sex),
+         Embarked = as.factor(Embarked)) %>%
+  mutate(Cabin = factor(ifelse(!is.na(Cabin), 1, 0))) %>%
+      mutate(Sex = as.factor(ifelse(Sex == 'male', 1, 0)))
+```
+
+```{r}
+test_model = predict(impute_preprocess, as.data.frame(test_model))
+```
+
+Check structure of test model and train model
+```{r}
+str(train_model)
+str(test_model)
+```
+
+## Modeling
+
+```{r}
+library(doParallel)
+#Find out how many cores are available (if you don't already know)
+cores<-detectCores()
+#Create cluster with desired number of cores, leave one open for the machine         
+#core processes
+cl <- makeCluster(cores[1]-1)
+#Register cluster
+registerDoParallel(cl)
+```
+
+Adaboost model
+```{r}
+adaboost_model = train(Survived ~., data = train_model, method = 'adaboost')
+adaboost_pred = predict(adaboost_model, test_model)
+```
+
+Glm
+```{r}
+glm_model = train(Survived ~., data = train_model, method = 'glm')
+glm_pred = predict(glm_model, test_model)
+```
+
+knn
+```{r}
+knn_model = train(Survived ~., data = train_model, method = 'knn')
+knn_pred = predict(knn_model, test_model)
+```
+
+lda model
+```{r}
+lda_model = train(Survived ~., data = train_model, method = 'lda')
+lda_pred = predict(lda_model, test_model)
+```
+
+rf_model
+```{r}
+rf_model = train(Survived ~., data = train_model, method = 'rf')
+rf_pred = predict(rf_model, test_model)
+```
+
+c5 model
+```{r}
+c5_model = train(Survived ~., data = train_model, method = 'C5.0Tree')
+c5_pred = predict(c5_model, test_model)
+```
+
+logistboost model
+```{r}
+logit_model = train(Survived ~., data = train_model, method = 'LogitBoost')
+logit_pred = predict(logit_model, test_model)
+```
+
+
+## Stacking
+
+```{r}
+combined_train_data = data.frame(
+      adaboost_pred = predict(adaboost_model),
+      glm_pred = predict(glm_model),
+      knn_pred = predict(knn_model),
+      lda_pred = predict(lda_model),
+      rf_pred = predict(rf_model),
+      c5_pred = predict(c5_model),
+      logit_pred= predict(logit_model)
+)
+
+combined_train_data$Survived = train_model$Survived
+
+head(combined_train_data)
+```
+
+
+```{r}
+combined_test_data = data.frame(adaboost_pred, glm_pred, knn_pred, lda_pred, rf_pred, c5_pred, logit_pred)
+head(combined_test_data)
+```
+
+## Build stack model
+
+```{r}
+gam_combined_fit = train(Survived ~., data = combined_train_data, method = 'gam')
+rf_combined_fit = train(Survived ~., data = combined_train_data, method = 'rf')
+```
+
+Predict stack model
+```{r}
+gam_combined_pred = predict(gam_combined_fit, combined_test_data)
+rf_combined_pred = predict(rf_combined_fit, combined_test_data)
+```
+
+# Save output
+
+```{r}
+gam_submission = read_csv('gender_submission.csv')
+gam_submission$Survived = gam_combined_pred
+gam_submission
+```
+```{r}
+rf_submission = read_csv('gender_submission.csv')
+rf_submission$Survived = rf_combined_pred
+rf_submission
+```
+
+```{r}
+table(rf_submission$Survived, gam_submission$Survived)
+```
+
+```{r}
+gam_submission %>%
+      write_csv('gam_submission.csv')
+
+rf_submission %>%
+      write_csv('rf_submission.csv')
+```
+
+
+
+```{r}
+lda_submission = rf_submission
+lda_submission$Survived = lda_pred
+lda_submission %>%
+      write_csv('lda_submission.csv')
+```
+
+
+
+
+
+
+
+
+
+

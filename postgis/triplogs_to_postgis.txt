@@ -80,5 +80,66 @@ JOIN (
 ON ST_INTERSECTS(t.geom, g.geom)
 
 
+--roads passed by 
+SELECT 
+	r.name AS road_name, 
+	r.geom AS geom_r,
+	t.geom AS geom_t
+FROM
+	roads AS r
+JOIN
+(	SELECT 
+		DATE_TRUNC('day', gps_received) AS gps_day,
+		MIN(gps_received) AS time_start,
+		MAX(gps_received) AS time_end,
+		ST_MAKELINE(geom ORDER BY gps_received) AS geom,
+		COUNT(gps_received) AS num_gps_records
+	FROM
+		gps_data
+	GROUP BY gps_day) AS t
+ON ST_INTERSECTS(r.geom, t.geom)
+
+
+--closest roads per point
+SELECT 
+	t.gps_received, 
+	roads.roads_name AS closest_road,
+	(t.geom <-> roads.geom_r)::numeric(10,3) AS distance
+FROM 
+	gps_data AS t
+CROSS JOIN LATERAL
+	(SELECT 
+	 	r.name AS roads_name,
+	 	r.geom AS geom_r
+	FROM 
+		roads AS r
+	ORDER BY t.geom <-> r.geom
+	LIMIT 1) AS roads
+	
+--distinct closest roads 
+SELECT
+	MIN(gps_received) AS start_time,
+	MAX(gps_received) AS end_time,
+	closest_road
+FROM(
+	SELECT 
+		t.gps_received, 
+		roads.roads_name AS closest_road,
+		(t.geom <-> roads.geom_r)::numeric(10,3) AS distance
+	FROM 
+		gps_data AS t
+	CROSS JOIN LATERAL
+		(SELECT 
+			r.name AS roads_name,
+			r.geom AS geom_r
+		FROM 
+			roads AS r
+		ORDER BY t.geom <-> r.geom
+		LIMIT 1) AS roads	
+) AS x
+GROUP BY
+	closest_road
+
+
 
 	
