@@ -1,0 +1,198 @@
+---
+title: "Nestle data to postgis2"
+author: "Me"
+date: "2/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+library(lubridate)
+library(data.table)
+```
+
+Establish connection
+```{r}
+
+pgdrv <- dbDriver(drvName = "PostgreSQL")
+postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = 'postgres',
+                    password = getPass("Enter Password:"))
+```
+
+
+Get data from postgresql
+```{r}
+points_in_geofences <- dbGetQuery(postgrescon, "SELECT 
+	name AS geofence_name,
+	datestamp,
+	plateno,
+	speed
+FROM
+	nestle_geofence AS g
+JOIN
+	nestle_gps_data AS t
+ON
+	ST_INTERSECTS(g.geom, t.geom)	;")
+
+dbDisconnect(postgrescon)
+```
+
+```{r}
+vehicle_location_group = points_in_geofences %>%
+      mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
+      group_by(plateno, geofence_name, track_period) %>%
+      mutate(time_start = min(datestamp),
+             time_end = max(datestamp),
+             num_points = n()) %>%
+      mutate(duration = as.duration(time_end - time_start)) %>%
+      filter(duration  > 300 & num_points > 5) %>%
+      arrange(plateno, geofence_name, track_period) %>%
+      select(plateno, geofence_name, track_period, time_start, time_end, duration, num_points)  %>%
+      distinct()
+
+vehicle_location_group
+```
+
+```{r}
+morethan5mins = vehicle_location_group %>%
+      arrange(plateno, track_period)
+```
+
+
+Rename column
+```{r}
+morethan5mins = morethan5mins %>%
+      rename(duration_period_at_geofence = duration)
+```
+
+
+For checking
+```{r}
+
+morethan5mins = morethan5mins %>%
+      group_by(plateno, geofence_name) %>%
+      arrange(plateno, geofence_name)
+
+morethan5mins = morethan5mins %>%
+      mutate(time_end_previous_location = lag(time_end),
+             time_start_next_location = lead(time_start)) %>%
+      mutate(time_difference_to_next_location = as.duration(time_start_next_location - time_end),
+             time_difference_from_prev_locatipn =as.duration(time_start - time_end_previous_location)) %>%
+      select(plateno,
+             geofence_name,
+             time_start, 
+             time_end,
+             time_end_previous_location,
+             time_start_next_location,
+             duration_period_at_geofence,
+             time_difference_to_next_location,
+             time_difference_from_prev_location =  time_difference_from_prev_locatipn,
+             everything())
+
+morethan5mins %>%
+      ungroup() %>%
+      mutate(track_period = as.character(track_period),
+             time_start = as.character(time_start), 
+             time_end = as.character(time_end), 
+             time_end_previous_location = as.character(time_end_previous_location),
+             time_start_next_location = as.character(time_start_next_location),
+             ) %>%
+      write_csv('checking.csv')
+```
+
+
+Filter out safe data
+```{r}
+morethan5mins = morethan5mins %>%
+        mutate(continue_next_location = time_difference_to_next_location < 200,
+               contine_prev_location = time_difference_from_prev_location < 200)  %>%
+      mutate(continue_both_location = contine_prev_location & continue_next_location)
+
+
+morethan5mins = morethan5mins %>%
+      filter(continue_both_location == F | is.na(continue_both_location))
+
+
+
+
+morethan5mins = morethan5mins %>%
+      group_by(plateno, geofence_name) %>%
+      mutate(actual_time_end = if_else(
+            is.na(time_end_previous_location) | lead(time_difference_from_prev_location) < duration(minutes = 5), 
+            lead(time_end),
+            time_end
+      )) 
+```
+
+
+```{r}
+morethan5mins = morethan5mins%>%
+      filter(!is.na(actual_time_end)) %>%
+      select(plateno, geofence_name, time_start, actual_time_end) %>%
+       mutate(duration_at_geofence = as.duration(actual_time_end - time_start))
+
+fixed_data = morethan5mins %>%
+      group_by(plateno, geofence_name, actual_time_end) %>%
+      mutate(rank = rank(desc(duration_at_geofence)))
+
+fixed_data = fixed_data %>%
+      filter(rank != 2) 
+
+fixed_data = fixed_data %>%
+      ungroup() %>%
+       mutate(time_start_next = lead(time_start)) %>%
+      mutate(time_until_next_location = as.duration(time_start_next - actual_time_end))
+
+fixed_data = fixed_data %>%
+      select(plateno, 
+             geofence_name,
+             first_timestamp = time_start, 
+             last_timestamp = actual_time_end, 
+             time_duration_at_geofence = duration_at_geofence,
+             time_duration_until_next_location = time_until_next_location)
+```
+
+
+```{r}
+fixed_data%>%
+      select(- time_duration_until_next_location) %>%
+      mutate(first_timestamp = as.character(first_timestamp),
+             last_timestamp = as.character(last_timestamp)) %>%
+      write_csv('fixed_data.csv')
+```
+
+
+```{r} 
+fixed_data %>%
+      select(- time_duration_until_next_location) %>%
+      mutate(first_timestamp = as.character(first_timestamp),
+             last_timestamp = as.character(last_timestamp)) %>%
+      arrange(plateno, first_timestamp)  %>%
+      write_csv('fixed_data_arranged.csv')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
