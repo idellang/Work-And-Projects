@@ -66,7 +66,7 @@ vehicle_location_group_universal = points_in_geofences %>%
       mutate(duration = as.duration(time_end - time_start)) %>%
       filter(duration  > 300 & num_points > 5) %>%
       arrange(plateno, site_number, track_period) %>%
-      select(plateno, site_number, geofence_name, track_period, time_start, time_end, duration, num_points)  %>%
+      select(plateno, site_number, track_period, time_start, time_end, duration, num_points)  %>%
       distinct()
 
 vehicle_location_group_universal
@@ -104,7 +104,6 @@ morethan5mins = morethan5mins %>%
              time_difference_from_prev_locatipn =as.duration(time_start - time_end_previous_location)) %>%
       select(plateno,
              site_number,
-             geofence_name,
              time_start, 
              time_end,
              time_end_previous_location,
@@ -131,8 +130,8 @@ Process overlapping 30 mins
 ```{r}
 #create boolean to check if is within 3 mins from previous track period
 morethan5mins = morethan5mins %>%
-        mutate(continue_next_location = time_difference_to_next_location < 200,
-               contine_prev_location = time_difference_from_prev_location < 200)  %>%
+        mutate(continue_next_location = time_difference_to_next_location < 300,
+               contine_prev_location = time_difference_from_prev_location < 300)  %>%
       mutate(continue_both_location = contine_prev_location & continue_next_location)
 
 #filter out data to record only entry and exit 
@@ -158,7 +157,7 @@ Final processing
 #compute for duration at geofence
 morethan5mins =  morethan5mins%>%
       filter(!is.na(actual_time_end)) %>%
-      select(plateno, site_number, geofence_name, time_start, actual_time_end) %>%
+      select(plateno, site_number, time_start, actual_time_end) %>%
        mutate(duration_at_geofence = as.duration(actual_time_end - time_start))
 
 #create ranking based on duration
@@ -176,7 +175,6 @@ fixed_data = fixed_data %>%
       ungroup() %>%
       select(plateno,
              site_number,
-             geofence_name,
              first_timestamp = time_start, 
              last_timestamp = actual_time_end, 
              time_duration_at_geofence = duration_at_geofence)
