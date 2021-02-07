@@ -1,1 +1,0 @@
-This is a sample R script
