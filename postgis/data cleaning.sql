@@ -83,3 +83,24 @@ FROM(
 ) AS foo	
 
 --
+
+CREATE TABLE transpecial_gps_data
+(
+    datestamp timestamp with time zone NOT NULL,
+   	geom geometry(point,4326),
+	plateno text
+);
+
+
+
+SELECT
+	t.datestamp,
+	t.geom geom_t,
+	t.plateno,
+	g.name AS geofence_name,
+	g.geom AS geom_g
+FROM 
+	transpecial_gps_data AS t
+JOIN
+	nestle_geofence AS g
+ON ST_INTERSECTS(g.geom, t.geom)

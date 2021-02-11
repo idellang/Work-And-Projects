@@ -1,7 +1,7 @@
 ---
-title: "Nestle data to postgis2"
+title: "Processing Transpecial Data"
 author: "Me"
-date: "2/2/2021"
+date: "2/9/2021"
 output: html_document
 ---
 
@@ -9,7 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Load libraries
 ```{r}
 library(tidyverse)
 library(RPostgreSQL)
@@ -30,25 +29,27 @@ postgrescon <-DBI::dbConnect(pgdrv,
 ```
 
 
-Get data from postgresql
 ```{r}
-points_in_geofences <- dbGetQuery(postgrescon, "SELECT 
-	name AS geofence_name,
-	datestamp,
-	plateno,
-	speed
-FROM
-	nestle_geofence AS g
+points_in_geofences <- dbGetQuery(postgrescon, "SELECT
+	t.datestamp,
+	t.plateno,
+	g.name AS geofence_name
+FROM 
+	transpecial_gps_data AS t
 JOIN
-	nestle_gps_data AS t
-ON
-	ST_INTERSECTS(g.geom, t.geom)	;")
-
-dbDisconnect(postgrescon)
+	nestle_geofence AS g
+ON 
+      ST_INTERSECTS(g.geom, t.geom);")
 ```
 
+
+
 ```{r}
-dim(points_in_geofences)
+points_in_geofences = points_in_geofences %>%
+      mutate(datestamp = ymd_hms(datestamp))
+      
+points_in_geofences = points_in_geofences %>%
+      arrange(datestamp)
 ```
 
 
@@ -64,22 +65,26 @@ vehicle_location_group = points_in_geofences %>%
       mutate(time_start = min(datestamp),
              time_end = max(datestamp),
              num_points = n()) %>%
-      mutate(duration = as.duration(time_end - time_start)) %>%
+      mutate(duration = as.duration(time_end - time_start)) 
+
+
+
+vehicle_location_group_reduced = vehicle_location_group%>%
       filter(duration  > 300 & num_points > 5) %>%
       arrange(plateno, geofence_name, track_period)
 
-vehicle_location_group = vehicle_location_group %>%
+
+vehicle_location_group_reduced = vehicle_location_group_reduced %>%
       select(plateno, geofence_name, track_period, time_start, time_end, duration, num_points)  %>%
       distinct()
-
-
 ```
+
 
 
 
 Create new variable morethan 5 mins for those that were sure to be inside the geofence for at least 5 mins
 ```{r}
-morethan5mins = vehicle_location_group %>%
+morethan5mins = vehicle_location_group_reduced %>%
       arrange(plateno, track_period)
 
 #Rename column
@@ -91,6 +96,8 @@ morethan5mins = morethan5mins %>%
       group_by(plateno, geofence_name) %>%
       arrange(plateno, geofence_name)
 ```
+
+
 
 
 compute fo time difference from previous location and next location
@@ -116,7 +123,10 @@ morethan5mins = morethan5mins %>%
              time_difference_to_next_location,
              time_difference_from_prev_location,
              everything())
+```
 
+No need to run
+```{r}
 #create csv for checking
 morethan5mins %>%
       ungroup() %>%
@@ -138,16 +148,6 @@ morethan5mins = morethan5mins %>%
                contine_prev_location = time_difference_from_prev_location < 300)  %>%
       mutate(continue_both_location = contine_prev_location & continue_next_location)
 
-
-morethan5mins %>%
-       mutate(track_period = as.character(track_period),
-             time_start = as.character(time_start), 
-             time_end = as.character(time_end), 
-             time_end_previous_location = as.character(time_end_previous_location),
-             time_start_next_location = as.character(time_start_next_location),
-             ) %>%
-      write_csv('checking2.csv')
-
 #filter out data to record only entry and exit 
 morethan5mins = morethan5mins %>%
       filter(continue_both_location == F | is.na(continue_both_location))
@@ -156,26 +156,18 @@ morethan5mins = morethan5mins %>%
 ```
 
 
+
 ```{r}
 #compute for actual end time
 morethan5mins = morethan5mins %>%
       group_by(plateno, geofence_name) %>%
       mutate(actual_time_end = if_else(
-            is.na(time_end_previous_location) | time_difference_to_next_location < 300, 
+            (is.na(time_end_previous_location) | lead(time_difference_from_prev_location)  < 300) 
+            & !(time_difference_to_next_location > 300), 
             lead(time_end),
             time_end
       )) 
 
-
-morethan5mins %>%
-        mutate(track_period = as.character(track_period),
-             time_start = as.character(time_start), 
-             time_end = as.character(time_end), 
-             time_end_previous_location = as.character(time_end_previous_location),
-             time_start_next_location = as.character(time_start_next_location),
-             actual_time_end = as.character(actual_time_end)
-             ) %>%
-      write_csv('checking3.csv')
 ```
 
 Final processing
@@ -217,6 +209,8 @@ fixed_data%>%
       write_csv('fixed_data.csv')
 ```
 
+
+
 Arranged fixed data
 ```{r} 
 fixed_data_arranged = fixed_data %>%
@@ -232,7 +226,7 @@ fixed_data_arranged %>%
 ```
 
 
-
+## Checking of errors
 ```{r}
 fixed_data_arranged %>%
       mutate(check_duplicate = time_duration_at_geofence + time_next) %>%
@@ -240,6 +234,70 @@ fixed_data_arranged %>%
       filter(check_duplicate < -1 | check_duplicate > 1 )
 ```
 
+
+
+```{r}
+fixed_data_arranged %>%
+      mutate(check_duplicate = time_duration_at_geofence + time_next) %>%
+      filter(time_next < -300) %>%
+      filter(check_duplicate < -300 | check_duplicate > 300 )
+```
+
+```{r}
+fixed_data_arranged %>%
+      mutate(check_duplicate = time_duration_at_geofence + time_next) %>%
+      filter(time_next < 0) %>%
+      filter(check_duplicate < -1 | check_duplicate > 1 ) %>%
+      distinct(geofence_name) %>%
+      filter(str_detect(geofence_name, 'Destination|Source'))
+```
+
+
+
+## Data validation
+
+GPS CICO output
+```{r}
+fixed_data_arranged %>%
+      select(first_timestamp, everything()) %>%
+      filter(plateno == 'ADC4769', geofence_name== 'PH Cofipack - Source')
+```
+
+
+```{r}
+points_group = points_in_geofences %>%
+      mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
+      group_by(plateno, geofence_name, track_period) %>%
+      mutate(time_start = min(datestamp),
+             time_end = max(datestamp),
+             num_points = n()) %>%
+      mutate(duration = as.duration(time_end - time_start))
+```
+
+GPS RAW DATA GROUP
+```{r}
+points_group %>%
+       filter(plateno == 'ADC4769', geofence_name== 'PH Cofipack - Source') %>%
+   arrange(datestamp)
+```
+
+
+
+
+## Output to CSV
+
+```{r}
+fixed_data_arranged %>%
+      arrange(first_timestamp) %>%
+      mutate(first_timestamp = as.character(first_timestamp),
+             last_timestamp = as.character(last_timestamp)) %>%
+      write_csv('GPS_CICO.csv')
+```
+
+
+```{r}
+cico = read_csv('GPS_CICO.csv')
+```
 
 
 

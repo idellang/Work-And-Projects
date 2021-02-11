@@ -1,0 +1,146 @@
+---
+title: "Matching using GPS CICO"
+author: "Me"
+date: "2/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Load libraries and establish connection
+```{r}
+library(elastic)
+library(elasticsearchr)
+library(jsonlite)
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(data.table)
+library(lubridate)
+library(getPass)
+
+conn = connect(
+host = "tmsuite-elasticsearch.trackme.com.ph",
+port = 443,
+path = NULL,
+transport_schema = "https",
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
+headers = NULL,
+cainfo = NULL,
+force = FALSE,
+errors = "simple",
+warn = TRUE
+)
+```
+
+```{r}
+query = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"match_all\": {}}, {\"match_phrase\": {\"client_name\": \"Transpecial Inc.\"}}, {\"nested\": {\"path\": \"pickups\", \"query\": {\"range\": {\"pickups.arrival\": {\"gte\": \"2021-01-01 00:00:00\", \"lt\": \"2021-01-31 23:59:59\", \"time_zone\": \"+08:00\"}}}}}, {\"match_phrase\": {\"group_names\": \"Nestle\"}}, {\"range\": {\"created\": {\"gte\": \"2020-11-30T16:00:00.000Z\", \"lte\": \"2021-02-11T08:14:36.890Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+```
+
+```{r}
+data = Search(conn, index = 'tmsuite_booking*', body = query, , raw = TRUE)
+
+data = fromJSON(data)
+
+data = data$hits$hits$`_source`
+```
+
+```{r}
+ data= data %>%
+   select(trip_number, vehicle_plate_no, dropoffs, pickups)
+
+
+
+data = data %>%
+   unnest_wider(dropoffs,names_repair = tidyr_legacy) %>%
+   unnest_wider(pickups, names_repair =  tidyr_legacy)
+
+data = data %>%
+      select(trip_number,
+             so_number,
+             vehicle_plate_no,
+             pickup_arrival = arrival1,
+             pickup_name = name1,
+             dropoff_arrival = arrival,
+             dropoff_name = name
+             )
+```
+
+```{r}
+data = data %>%
+      mutate(pickup_arrival = ymd_hms(pickup_arrival) + hours(8),
+             dropoff_arrival = ymd_hms(dropoff_arrival) + hours(8))
+```
+
+```{r}
+data %>%
+      write_csv('processed_bookings.csv')
+```
+
+
+```{r}
+bookings = read_csv('processed_bookings.csv')
+bookings
+```
+
+```{r}
+bookings_gathered = bookings %>%
+   gather(key = 'location_type', value = 'location', pickup_name, dropoff_name) %>%
+   gather(key = 'time_type', value = 'time', pickup_arrival, dropoff_arrival) %>%
+   arrange(trip_number) %>%
+   mutate(same = ifelse(
+      (str_starts(location_type, 'pickup') & str_starts(time_type, 'pickup')) |
+       (str_starts(location_type, 'dropoff') & str_starts(time_type, 'dropoff')),
+      1,0
+   )) %>%
+   filter(same == 1)
+```
+
+```{r}
+bookings_gathered = bookings_gathered %>%
+      select(-same)
+
+bookings_gathered = bookings_gathered %>%
+      filter(!is.na(location) & !is.na(vehicle_plate_no))
+```
+
+
+```{r}
+cico_gps
+```
+
+
+```{r}
+merged = bookings_gathered %>%
+      full_join(cico_gps, by = c('vehicle_plate_no'= 'gps_plateno','location' = 'gps_geofence_name'), keep = TRUE) %>%
+      select(booking_plateno = vehicle_plate_no,
+             gps_plateno,
+             booking_location = location,
+             gps_location = gps_geofence_name,
+             booking_time = time,
+             gps_time = gps_first_timestamp,
+             trip_number,
+             so_number,
+             location_type,
+             everything())
+```
+
+```{r}
+merged %>%
+      mutate(time_difference = as.duration(booking_time - gps_time)) %>%
+      mutate(abs_time_difference = abs(time_difference))
+```
+
+
+```{r}
+merged %>%
+      filter(booking_plateno == )
+```
+
+
+
+

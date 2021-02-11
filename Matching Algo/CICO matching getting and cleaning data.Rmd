@@ -123,6 +123,46 @@ processed_data %>%
       write_csv('processed_bookings.csv')
 ```
 
+
+```{r}
+processed_data = read_csv('processed_bookings.csv')
+```
+
+Gather dropoff or pickup
+```{r}
+processed_data_gathered = processed_data %>%
+   select(-pickup_departure) %>%
+   gather(key = 'location_type', value = 'location', pickup_name, dropoff_name) %>%
+   gather(key = 'time_type', value = 'time', pickup_arrival, dropoff_arrival) %>%
+   arrange(trip_number) %>%
+   mutate(same = ifelse(
+      (str_starts(location_type, 'pickup') & str_starts(time_type, 'pickup')) |
+       (str_starts(location_type, 'dropoff') & str_starts(time_type, 'dropoff')),
+      1,0
+   )) %>%
+   filter(same == 1)
+```
+
+```{r}
+min_max_time = processed_data_gathered %>%
+   summarise(min_time = min(time),
+             max_time = max(time))
+
+min_max_time$min_time
+```
+
+```{r}
+min_max_time$min_time_minus_3 = min_max_time$min_time - days(3)
+min_max_time$max_time_plus_3 = min_max_time$min_time + days(3)
+min_max_time
+```
+
+Query date range
+```{r}
+
+```
+
+
 # Get data per timestamp
 
 ```{r}
@@ -134,8 +174,6 @@ data = Search(conn, index = 'tmsuite_triplogs_20*', body = pu_after_query, , raw
 
 data = fromJSON(data)
 data = data$hits$hits$`_source`
-
-
 ```
 
 

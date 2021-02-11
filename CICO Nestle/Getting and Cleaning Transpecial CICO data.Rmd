@@ -1,0 +1,156 @@
+---
+title: "Getting and Cleaning Transpecial CICO data"
+author: "Me"
+date: "2/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+library(lubridate)
+library(data.table)
+```
+
+#Get entered data from CSV transpecial
+```{r}
+data = fread('Transpecial-GPS-January2021.csv')
+data = as_tibble(data)
+```
+
+
+Remove unncessary characters in alert message
+```{r}
+data = data %>%
+      mutate(alert_msgs = str_replace_all(alert_msgs,'\\[|\\]|\\"',''))
+```
+
+Extract location from pattern
+```{r}
+pattern = '(Entered .*)'
+
+entered_data = data %>%
+      mutate(extracted = str_extract_all(alert_msgs, pattern)) %>%
+      unnest(extracted) %>%
+      separate_rows(alert_msgs, sep =',')
+```
+
+Process entered data
+```{r}
+entered_data = entered_data %>%
+      separate(alert_msgs, into = c('alert','location'), sep = ' ', extra = 'merge', fill = 'right') %>%
+      mutate(alert = ifelse(alert == 'Left' | alert == 'Entered', alert, paste(alert, location))) %>%
+      mutate(location = ifelse(alert == 'Left' | alert == 'Entered', location, NA)) %>%
+      select(-alert, -extracted)
+entered_data
+```
+
+
+
+```{r}
+entered_data = entered_data %>%
+   mutate(datestamp = mdy_hms(datestamp)) %>%
+   arrange(datestamp) %>%
+   mutate(datestamp = as.character(datestamp))
+```
+
+```{r}
+entered_data = entered_data %>%
+      select(datestamp, plateno, location, longitude, latitude)
+```
+
+
+```{r}
+dbWriteTable(postgrescon, "transpecial_entered_data", entered_data, row.names=FALSE, append=TRUE)
+```
+
+
+## Upload data from R to postgis
+```{r}
+pgdrv <- dbDriver(drvName = "PostgreSQL")
+postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = 'postgres',
+                    password = getPass("Enter Password:"))
+```
+
+```{r}
+data = data %>%
+      select(-speed, -alert_msgs)
+
+data = data %>%
+   mutate(datestamp = mdy_hms(datestamp)) %>%
+   mutate(datestamp = as.character(datestamp))
+```
+
+```{r}
+dbWriteTable(postgrescon, "transpecial_gps_staging", data, row.names=FALSE, append=TRUE)
+```
+
+
+
+
+## Double check entered data and gps data from postgis
+
+```{r}
+points_in_geofences <- dbGetQuery(postgrescon, "SELECT
+	t.datestamp,
+	t.plateno,
+	g.name AS geofence_name
+FROM 
+	transpecial_gps_data AS t
+JOIN
+	nestle_geofence AS g
+ON 
+      ST_INTERSECTS(g.geom, t.geom);")
+```
+
+
+
+```{r}
+points_in_geofences %>%
+   filter(plateno == 'ADC4769' & geofence_name == 'PH Cofipack - Source') %>%
+   arrange(datestamp)
+```
+
+## Checking
+```{r}
+entered_data %>%
+   write_csv('TMSUITE_CICO.csv')
+```
+
+```{r}
+entered_data1 = read_csv('TMSUITE_CICO.csv')
+```
+
+
+CICO TMSUITE GROUP
+```{r}
+entered_data %>%
+   arrange(datestamp, plateno) %>%
+   filter(plateno == 'ADC4769', location== 'PH Cofipack - Source')
+   
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

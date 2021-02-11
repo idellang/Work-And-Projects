@@ -9,6 +9,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r}
+numCores <- detectCores()
+library(doParallel)
+registerDoParallel(numCores)
+
+```
+
+
 Exploration of triplogs data
 
 Load libraries and establish connection
@@ -149,6 +157,8 @@ dhl_data = dhl_data %>%
 
 dhl_data = dhl_data %>% distinct()
 ```
+
+
 ```{r}
 dhl_data = dhl_data %>%
     gather(key = 'logistic_type', 'location', pickup_location, dropoff_location) %>%
@@ -291,7 +301,7 @@ Can filter using duration
 
 ```{r}
 merged %>%
-   filter(duration > duration(weeks = 2))
+   filter(duration < abs(duration(days = 3)))
 ```
 536 records where booked location is visited within the day
 
