@@ -1,0 +1,1 @@
+CICO generated data from GPS trips. Two types of data format, one is original cico while the other is formatted the same way as FO

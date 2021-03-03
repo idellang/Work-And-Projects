@@ -70,6 +70,7 @@ dbWriteTable(postgrescon, "transpecial_entered_data", entered_data, row.names=FA
 ```
 
 
+
 ## Upload data from R to postgis
 ```{r}
 pgdrv <- dbDriver(drvName = "PostgreSQL")
@@ -79,6 +80,8 @@ postgrescon <-DBI::dbConnect(pgdrv,
                     user = 'postgres',
                     password = getPass("Enter Password:"))
 ```
+
+
 
 ```{r}
 data = data %>%
@@ -92,8 +95,6 @@ data = data %>%
 ```{r}
 dbWriteTable(postgrescon, "transpecial_gps_staging", data, row.names=FALSE, append=TRUE)
 ```
-
-
 
 
 ## Double check entered data and gps data from postgis
@@ -126,20 +127,21 @@ entered_data %>%
 ```
 
 ```{r}
-entered_data1 = read_csv('TMSUITE_CICO.csv')
+entered_data = read_csv('TMSUITE_CICO.csv')
 ```
-
 
 CICO TMSUITE GROUP
 ```{r}
 entered_data %>%
    arrange(datestamp, plateno) %>%
-   filter(plateno == 'ADC4769', location== 'PH Cofipack - Source')
-   
+         filter(plateno == 'ACE1174', location== 'Ritchjoy Marketing')
 ```
 
 
-
+```{r}
+entered_data %>%
+   arrange(datestamp, plateno)
+```
 
 
 

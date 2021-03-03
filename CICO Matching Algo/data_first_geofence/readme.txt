@@ -1,0 +1,1 @@
+GPS cico generated using the local geofence of nestle

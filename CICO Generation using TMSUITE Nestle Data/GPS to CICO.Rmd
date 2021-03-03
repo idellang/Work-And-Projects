@@ -1,0 +1,410 @@
+---
+title: "GPS data to CICO"
+author: "Me"
+date: "2/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load libraries
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+library(lubridate)
+library(data.table)
+```
+
+Read data
+```{r}
+data = read_csv('Transpecial-GPS-Dec-to-Jan-Formatted-ver2.csv')
+
+format_data = function(data){
+      
+      data = data %>%
+            mutate(datestamp = datestamp + hours(8))
+      
+      # data = data %>%
+      #       separate(location, into = c('longitude','latitude'), sep = ',')
+      
+      data = data %>%
+            mutate(longitude = as.numeric(longitude),
+                   latitude = as.numeric(latitude))
+
+      data = data %>%
+            select(datestamp, plateno, alert_msgs, longitude, latitude)
+      
+      return(data)
+}
+
+formatted_data = format_data(data)
+
+```
+
+#for checking
+```{r}
+formatted_data %>%
+      summarise(min(datestamp),
+                max(datestamp))
+```
+
+get location from alert messages
+```{r}
+
+get_entered = function(data){
+      
+      data = data %>%
+      mutate(alert_msgs = str_replace_all(alert_msgs,"\\[|\\]|\\'",''))
+
+      pattern = '(Entered .*)'
+
+      entered_data = data %>%
+            mutate(extracted = str_extract_all(alert_msgs, pattern)) %>%
+            unnest(extracted) %>%
+            separate_rows(alert_msgs, sep =',')
+
+
+      entered_data = entered_data %>%
+            filter(str_detect(alert_msgs,'Entered')) %>%
+            mutate(location = str_replace(alert_msgs,'Entered ',''))
+      
+      entered_data %>%
+            arrange(datestamp) %>%
+            mutate(datestamp = as.character(datestamp))
+      
+      entered_data = entered_data %>%
+            select(datestamp, plateno, latitude, longitude, location)
+      
+      return(entered_data)
+}
+entered_data = get_entered(formatted_data)
+#entered_data %>%
+ #     write_csv('PAN_Entered_DecToJan.csv')
+# entered_data %>% 
+#       mutate(datestamp = as.character(datestamp)) %>%
+#       write_csv('Transpecial_CICO_FromTMSUITEver2.csv')
+```
+
+Gps data to postgis
+```{r}
+formatted_data
+```
+
+
+```{r}
+gps_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass, password){
+      pgdrv <- dbDriver(drvName = "PostgreSQL")
+      
+      postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = userpass,
+                    password = password)
+      
+      data = data %>%
+            select(-alert_msgs)
+      
+      data = data %>%
+            mutate(datestamp = as.character(datestamp))
+      
+      dbWriteTable(postgrescon, postgis_table, data, row.names=FALSE, append=TRUE)
+}
+
+gps_to_postgis(formatted_data, 'staging_table', userpass = 'postgres', password = getPass('Password:'))
+```
+
+
+Make sure that the uploaded gps data is converted to geom
+```{r}
+query =  "SELECT
+	t.datestamp,
+	t.plateno,
+	g.name AS geofence_name
+FROM 
+	gps_data AS t
+JOIN
+	nestle_geofences_updated AS g
+ON 
+      ST_INTERSECTS(g.geom, t.geom);"
+
+get_gps_inside_geofence = function(userpass, password, query){
+   pgdrv <- dbDriver(drvName = "PostgreSQL")
+   postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = userpass,
+                    password = password)
+   
+   points_in_geofences <- dbGetQuery(postgrescon, query)
+ 
+   points_in_geofences = points_in_geofences %>%
+      mutate(datestamp = ymd_hms(datestamp))
+      
+   points_in_geofences = points_in_geofences %>%
+      arrange(datestamp)
+     
+   return(points_in_geofences)
+}
+
+points_inside_geofence = get_gps_inside_geofence(userpass = 'postgres', password = getPass('Password:'), query = query)
+```
+
+
+
+
+```{r}
+get_cico = function(points_inside_geofences){
+   vehicle_location_group = points_inside_geofence %>%
+      mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
+      group_by(plateno, geofence_name, track_period) %>%
+      mutate(time_start = min(datestamp),
+             time_end = max(datestamp),
+             num_points = n()) %>%
+      mutate(duration = as.duration(time_end - time_start)) 
+
+
+   #remove passed only
+   vehicle_location_group_reduced = vehicle_location_group%>%
+         filter(duration  > 300 & num_points > 5) %>%
+         arrange(plateno, geofence_name, track_period)
+   
+   
+   vehicle_location_group_reduced = vehicle_location_group_reduced %>%
+         select(plateno, geofence_name, track_period, time_start, time_end, duration, num_points)  %>%
+         distinct()
+   
+   morethan5mins = vehicle_location_group_reduced %>%
+      arrange(plateno, track_period)
+
+   #Rename column
+   morethan5mins = morethan5mins %>%
+         rename(duration_period_at_geofence = duration)
+   
+   #remove initial checking
+   morethan5mins = morethan5mins %>%
+         group_by(plateno, geofence_name) %>%
+         arrange(plateno, geofence_name)
+   
+   morethan5mins = morethan5mins %>%
+      mutate(time_end_previous_location = lag(time_end),
+             time_start_next_location = lead(time_start)) %>%
+      mutate(time_difference_to_next_location = as.duration(time_start_next_location - time_end),
+             time_difference_from_prev_location =as.duration(time_start - time_end_previous_location)) 
+   
+   morethan5mins = morethan5mins %>%
+      select(plateno,
+             geofence_name,
+             time_start, 
+             time_end,
+             time_end_previous_location,
+             time_start_next_location,
+             duration_period_at_geofence,
+             time_difference_to_next_location,
+             time_difference_from_prev_location,
+             everything())
+   
+   
+   morethan5mins = morethan5mins %>%
+        mutate(continue_next_location = time_difference_to_next_location < 300,
+               contine_prev_location = time_difference_from_prev_location < 300)  %>%
+      mutate(continue_both_location = contine_prev_location & continue_next_location)
+
+   #filter out data to record only entry and exit 
+   morethan5mins = morethan5mins %>%
+      filter(continue_both_location == F | is.na(continue_both_location))
+   
+   #compute for actual end time
+   morethan5mins = morethan5mins %>%
+      group_by(plateno, geofence_name) %>%
+      mutate(actual_time_end = if_else(
+            (is.na(time_end_previous_location) | lead(time_difference_from_prev_location)  < 300) 
+            & !(time_difference_to_next_location > 300), 
+            lead(time_end),
+            time_end
+      )) 
+   #filter no actual time end because they are the last for that location
+   #select relevant columns
+   #compute for duration at geofence
+   morethan5mins = morethan5mins%>%
+         filter(!is.na(actual_time_end)) %>%
+         select(plateno, geofence_name, time_start, actual_time_end) %>%
+          mutate(duration_at_geofence = as.duration(actual_time_end - time_start))
+   
+   #create ranking based on duration
+   fixed_data = morethan5mins %>%
+         group_by(plateno, geofence_name, actual_time_end) %>%
+         mutate(rank = rank(desc(duration_at_geofence)))
+   
+   
+   #remove the last entry
+   fixed_data = fixed_data %>%
+         filter(rank != 2) 
+   
+   #ungroup and select cols
+   fixed_data = fixed_data %>%
+         ungroup() %>%
+         select(plateno, 
+                geofence_name,
+                first_timestamp = time_start, 
+                last_timestamp = actual_time_end, 
+                time_duration_at_geofence = duration_at_geofence)
+   
+   fixed_data_arranged = fixed_data %>%
+      arrange(plateno, first_timestamp) %>%
+      group_by(plateno) %>%
+      mutate(time_next = lead(first_timestamp)) %>%
+      mutate(time_next = as.duration(time_next - last_timestamp))
+   
+   fixed_data_arranged = fixed_data_arranged %>%
+      arrange(first_timestamp) %>%
+      mutate(first_timestamp = as.character(first_timestamp),
+             last_timestamp = as.character(last_timestamp)) 
+   
+   return(fixed_data_arranged)
+}
+
+cico_data = get_cico(points_inside_geofence)
+cico_data %>%
+      write_csv('EHD_GPS_CICO_DecToJan_ver2.csv')
+```
+
+```{r}
+entered_data %>%
+      arrange(plateno, datestamp)
+
+```
+
+```{r}
+cico_data %>%
+      arrange(plateno, first_timestamp)
+```
+
+
+```{r}
+all_data = cico_data %>%
+   full_join(entered_data, by = c('plateno' = 'plateno', 'geofence_name' = 'location'), keep = TRUE)
+
+all_data = all_data %>%
+      mutate(first_timestamp = ymd_hms(first_timestamp)) %>%
+      mutate(time_difference = as.duration(first_timestamp - datestamp)) %>%
+      mutate(abs_time_difference = abs(time_difference))
+
+all_data %>%
+   distinct() %>%
+   filter(abs_time_difference < duration(minutes = 10))
+```
+
+
+```{r}
+ranking1 = all_data %>%
+      distinct() %>%
+      group_by(plateno.x, plateno.y, geofence_name, location) %>%
+      filter(abs_time_difference < duration(week = 1)) %>%
+      mutate(ranking = rank(abs_time_difference, ties.method = 'first')) %>%
+      filter(ranking == 1)
+
+ranking1 %>%
+   filter(abs_time_difference < duration(hours = 1)) %>%
+      ungroup() %>%
+      ggplot(aes(abs_time_difference))+
+      geom_histogram()+
+   scale_y_continuous(breaks = c(0,50,150,200,250, 275, 300))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# DONT USE FIRST
+```{r}
+get_entered = function(data){
+      data = data %>%
+            mutate(alert_msgs = str_replace_all(alert_msgs,'\\[|\\]|\\"',''))
+      
+      pattern = '(Entered .*)'
+
+      entered_data = data %>%
+            mutate(extracted = str_extract_all(alert_msgs, pattern)) %>%
+            unnest(extracted) %>%
+            separate_rows(alert_msgs, sep =',')
+      
+      entered_data = entered_data %>%
+            separate(alert_msgs, into = c('alert','location'), sep = ' ', extra = 'merge', fill = 'right') %>%
+            mutate(alert = ifelse(alert == 'Left' | alert == 'Entered', alert, paste(alert, location))) %>%
+            mutate(location = ifelse(alert == 'Left' | alert == 'Entered', location, NA)) %>%
+            select(-alert, -extracted)
+      
+      entered_data %>%
+            mutate(datestamp = mdy_hms(datestamp)) %>%
+            arrange(datestamp) %>%
+            mutate(datestamp = as.character(datestamp))
+      
+      entered_data = entered_data %>%
+            select(datestamp, plateno, location, longitude, latitude)
+      
+      return(entered_data)
+}
+
+entered_data = get_entered(data)
+```
+
+# DONT USE FIRST
+
+Write to postgis
+```{r}
+dbWriteTable(postgrescon, "transpecial_entered_data", entered_data, row.names=FALSE, append=FALSE)
+```
+
+Gps data to postgis
+```{r}
+gps_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass, password){
+      pgdrv <- dbDriver(drvName = "PostgreSQL")
+      
+      postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = userpass,
+                    password = password)
+      
+      data = data %>%
+            select(-speed, -alert_msgs)
+      data = data %>%
+            mutate(datestamp = mdy_hms(datestamp)) %>%
+            mutate(datestamp = as.character(datestamp))
+      
+      dbWriteTable(postgrescon, postgis_table, data, row.names=FALSE, append=TRUE)
+}
+
+gps_to_postgis(data, 'sample_table', userpass = 'postgres', password = getPass('Password:'))
+```
+
+## Processing CICO from GPS
+
+```{r}
+formatted_data
+```
+
+
+#
+```{r}
+data = read_csv('For Ham/TranspecialDecJan_CICO_FromGPS.csv')
+data2 = read_csv('For Ham/TranspecialDecJan_CICO_FromTMSUITE.csv')
+```
+

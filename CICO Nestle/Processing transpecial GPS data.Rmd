@@ -37,7 +37,7 @@ points_in_geofences <- dbGetQuery(postgrescon, "SELECT
 FROM 
 	transpecial_gps_data AS t
 JOIN
-	nestle_geofence AS g
+	nestle_geofences_updated AS g
 ON 
       ST_INTERSECTS(g.geom, t.geom);")
 ```
@@ -222,7 +222,7 @@ fixed_data_arranged = fixed_data %>%
 fixed_data_arranged %>%
       mutate(first_timestamp = as.character(first_timestamp),
              last_timestamp = as.character(last_timestamp)) %>%
-      write_csv('fixed_data_arranged.csv')
+      write_csv('cico_gps_updated.csv')
 ```
 
 
@@ -254,36 +254,6 @@ fixed_data_arranged %>%
 
 
 
-## Data validation
-
-GPS CICO output
-```{r}
-fixed_data_arranged %>%
-      select(first_timestamp, everything()) %>%
-      filter(plateno == 'ADC4769', geofence_name== 'PH Cofipack - Source')
-```
-
-
-```{r}
-points_group = points_in_geofences %>%
-      mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
-      group_by(plateno, geofence_name, track_period) %>%
-      mutate(time_start = min(datestamp),
-             time_end = max(datestamp),
-             num_points = n()) %>%
-      mutate(duration = as.duration(time_end - time_start))
-```
-
-GPS RAW DATA GROUP
-```{r}
-points_group %>%
-       filter(plateno == 'ADC4769', geofence_name== 'PH Cofipack - Source') %>%
-   arrange(datestamp)
-```
-
-
-
-
 ## Output to CSV
 
 ```{r}
@@ -294,11 +264,64 @@ fixed_data_arranged %>%
       write_csv('GPS_CICO.csv')
 ```
 
+#Data validation
 
+```{r}
+points_in_geofences <- dbGetQuery(postgrescon, "SELECT
+	t.datestamp,
+	t.plateno,
+	g.name AS geofence_name
+FROM 
+	transpecial_gps_data AS t
+JOIN
+	nestle_geofences_eli AS g
+ON 
+      ST_INTERSECTS(g.geom, t.geom);")
+
+points_group = points_in_geofences %>%
+      mutate(datestamp = ymd_hms(datestamp)) %>%
+      mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
+      group_by(plateno, geofence_name, track_period) %>%
+      mutate(time_start = min(datestamp),
+             time_end = max(datestamp),
+             num_points = n()) %>%
+      mutate(duration = as.duration(time_end - time_start))
+```
+
+```{r}
+points_group %>%
+      mutate(datestamp = as.character(datestamp)) %>%
+      write_csv('points_group.csv')
+```
+
+
+GPS RAW DATA INSIDE GEOFENCES GROUPED
+```{r}
+points_group = read_csv('points_group.csv')
+```
+
+```{r}
+points_group %>%  
+      filter(plateno == 'ACE1174', geofence_name== 'Ritchjoy Marketing') %>%
+   arrange(datestamp)
+```
+
+CICO using GPS
 ```{r}
 cico = read_csv('GPS_CICO.csv')
 ```
 
+```{r}
+cico %>%
+      select(first_timestamp, everything()) %>%
+      rename(location = geofence_name) %>%
+         filter(plateno == 'ACE1174', location== 'Ritchjoy Marketing')
+```
+
+
+```{r}
+cico
+```
 
 
 

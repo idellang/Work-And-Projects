@@ -15,7 +15,7 @@ library(tidyr)
 ```
 
 ```{r}
-cico_gps = read_csv('GPS_CICO.csv')
+cico_gps = read_csv('cico_gps_updated.csv')
 cico_gps = cico_gps %>%
       select(-time_next)
 ```
@@ -25,7 +25,6 @@ cico_actual = read_csv('TMSUITE_CICO.csv')
 cico_actual = cico_actual %>%
       arrange(plateno, datestamp)
 
-cico_actual
 ```
 
 ```{r}
@@ -69,6 +68,12 @@ all_data = all_data %>%
       mutate(time_difference = as.duration(gps_first_timestamp - actual_datestamp)) %>%
       mutate(abs_time_difference = abs(time_difference))
 ```
+```{r}
+all_data %>%
+   distinct() %>%
+   filter(abs_time_difference < duration(minutes = 10))
+```
+
 
 Get the minimum time difference per group
 ```{r}
@@ -80,9 +85,11 @@ ranking1 = all_data %>%
       filter(ranking == 1)
 
 ranking1 %>%
+   filter(abs_time_difference < duration(hours = 1)) %>%
       ungroup() %>%
       ggplot(aes(abs_time_difference))+
-      geom_histogram()
+      geom_histogram()+
+   scale_y_continuous(breaks = c(0,50,150,200,250, 275, 300))
 ```
 
 
