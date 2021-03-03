@@ -1,1 +1,0 @@
-Check if the vehicles are inside the said geofences at the time stated in their FOs
