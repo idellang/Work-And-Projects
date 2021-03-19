@@ -1,0 +1,137 @@
+---
+title: "Exploring Jumping GPS data"
+author: "Me"
+date: "3/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+# Pan
+
+```{r}
+jumping_pan = read_csv('output_data/jumping_pan.csv')
+
+jumping_pan %>%
+      distinct(plateno)
+```
+W
+
+```{r}
+jumping_pan = jumping_pan %>%
+      mutate(speed = distance_covered/(date_part + 1)) %>%
+      mutate(kmh = speed * 3.6) %>%
+      mutate(invalid_speed = kmh > 100) 
+
+jumping_pan%>%
+      group_by(plateno) %>%
+      summarise(percent_wrong_data = mean(invalid_speed, na.rm = T)) %>%
+      mutate(percent_wrong_data = percent_wrong_data * 100) %>%
+      arrange(desc(percent_wrong_data))
+
+jumping_pan %>%
+      filter(plateno == 'CAL1825')
+```
+
+Only .03 percent have wrong speed
+```{r}
+jumping_pan %>%
+      summarise(mean(invalid_speed, na.rm = T) * 100)
+```
+
+There are 283 rows with invalid speed
+```{r}
+nrow(jumping_pan) * 0.0373459	
+```
+
+```{r}
+jumping_pan %>%
+      filter(date_part > 36000/2)
+```
+
+No long datepart 
+
+# EHD
+
+```{r}
+jumping_ehd = read_csv('output_data/ehd_jumping.csv')
+
+jumping_ehd = jumping_ehd %>%
+      mutate(speed = distance_covered/(date_part + 1)) %>%
+      mutate(kmh = speed * 3.6) %>%
+      mutate(invalid_speed = kmh > 100) 
+```
+
+```{r}
+jumping_ehd%>%
+      group_by(plateno) %>%
+      summarise(percent_wrong_data = mean(invalid_speed, na.rm = T)) %>%
+      mutate(percent_wrong_data = percent_wrong_data * 100) %>%
+      arrange(desc(percent_wrong_data))
+```
+
+```{r}
+jumping_ehd %>%
+      filter(plateno == 'CAA3526')
+```
+
+
+There are more errorneous data in ehd. There is even a plate number with 97% wrong data.Keep in mind that this data is already processed
+
+```{r}
+jumping_ehd %>%
+      summarise(mean(invalid_speed, na.rm = T) * 100)
+```
+32% have invalid speed
+
+Aside from that there were also GPS devices that long date part interval
+```{r}
+jumping_ehd %>%
+      filter(date_part > 36000)
+```
+
+# Transpecial
+
+
+```{r}
+jumping_trans = read_csv('output_data/jumping_trans_new.csv')
+
+jumping_trans = jumping_trans %>%
+      mutate(speed = distance_covered/(date_part + 1)) %>%
+      mutate(kmh = speed * 3.6) %>%
+      mutate(invalid_speed = kmh > 100) 
+```
+
+
+```{r}
+jumping_trans%>%
+      group_by(plateno) %>%
+      filter(date_part < 3600) %>%
+      summarise(percent_wrong_data = mean(invalid_speed, na.rm = T)) %>%
+      mutate(percent_wrong_data = percent_wrong_data * 100) %>%
+      arrange(desc(percent_wrong_data))
+```
+Dahil sa malalayong interval
+
+
+There are more errorneous data in ehd. There is even a plate number with 97% wrong data.Keep in mind that this data is already processed
+
+```{r}
+jumping_trans %>%
+      summarise(mean(invalid_speed, na.rm = T) * 100)
+```
+32% have invalid speed
+
+Aside from that there were also GPS devices that long date part interval
+```{r}
+jumping_trans %>%
+      filter(date_part > 36000)
+```
+

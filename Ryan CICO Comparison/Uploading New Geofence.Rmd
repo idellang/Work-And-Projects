@@ -1,0 +1,43 @@
+---
+title: "Uploading new geofence data"
+author: "Me"
+date: "3/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+```
+
+
+```{r}
+geofence = read_csv('Nestle-Geofence-Formatted.csv')
+geofence = geofence %>%
+        select(-client_ids, -client_names)
+
+geofence
+```
+
+Upload geofence to postgis
+
+```{r}
+geofence = geofence %>%
+      janitor::clean_names()
+```
+
+
+```{r}
+pgdrv <- dbDriver(drvName = "PostgreSQL")
+ 
+postgrescon <-DBI::dbConnect(pgdrv, dbname="WTI", host="localhost", port=5432, user = 'postgres', password = getPass('password:' ))
+
+dbWriteTable(postgrescon, 'nestle_geofence_march', geofence, row.names=FALSE, append=TRUE)
+```
+
+
