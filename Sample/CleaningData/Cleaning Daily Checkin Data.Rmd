@@ -1,0 +1,340 @@
+---
+title: "Cleaning Daily Checkin Data"
+author: "Me"
+date: "3/20/2021"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE, warning= FALSE, error=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE)
+```
+
+```{r, warning= FALSE, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(data.table)
+library(knitr)
+```
+
+# DO A SIMPLE EDA TO CLEAN THE DATA
+
+```{r, warning=FALSE, message=FALSE}
+checkin = read_csv('dailycheckins.csv')
+checkin %>%
+  head(10) %>%
+  kable()
+```
+Missing values
+```{r}
+map_dbl(checkin, function(x) sum(is.na(x)))
+```
+
+5 missing data from user
+
+### Check user column
+
+```{r}
+checkin %>%
+        count(user) %>%
+  arrange(desc(n)) %>%
+  head(15)%>%
+  kable()
+```
+
+No mistype of entry but with 5 missing data
+```{r}
+checkin %>%
+        filter(is.na(user)) %>%
+  kable()
+```
+
+Missing users are from different project. The timestamps are identical.
+
+### Check timestamp column
+
+Columns without UTC
+```{r}
+checkin %>%
+        filter(str_detect(timestamp,'UTC', negate = TRUE))
+```
+
+
+```{r}
+checkin %>%
+        select(timestamp) %>%
+        count(str_detect(timestamp,'UTC', negate = TRUE)) %>%
+  kable()
+```
+
+Can just assume all are UTC
+
+### Count entries with different encoding
+
+```{r}
+checkin %>%
+        mutate(timestamp = str_remove(timestamp,'UTC')) %>%
+        filter(str_detect(timestamp, '[:alpha:]')) %>%
+        filter(str_detect(timestamp, 'AM|PM', negate =  TRUE))
+```
+
+There are 1022 rows with different encoding.
+
+```{r}
+checkin %>%
+        mutate(timestamp = str_remove(timestamp,'UTC')) %>%
+        filter(str_detect(timestamp, '[:alpha:]')) %>%
+        filter(str_detect(timestamp, 'AM|PM', negate =  TRUE)) %>%
+        pull(timestamp) %>%
+        head(30) %>%
+  kable()
+```
+
+The words are month in russian.
+
+### Fix timestamp column
+
+
+Cant detect entries with different encoding as string literal. Manually detect it using filters. Identify those with different encoding
+```{r}
+checkin = checkin %>%
+        mutate(has_utc = str_detect(timestamp, 'UTC')) %>%
+        mutate(timestamp = str_remove(timestamp,'UTC')) %>%
+        mutate(has_letter = str_detect(timestamp, '[:alpha:]')) %>%
+        mutate(notAMPM = str_detect(timestamp, 'AM|PM', negate =  TRUE)) %>%
+        mutate(to_change = (has_letter & notAMPM)) %>%
+        select(-has_letter, -notAMPM)
+```
+
+### Brute force the month since I cant find how to change encoding
+
+Create another table for mapping russian to english
+```{r}
+checkin = checkin %>%
+        mutate(month_russian = str_extract(timestamp, '[:alpha:]+')) %>%
+        mutate(month_russian = ifelse(str_detect(month_russian, 'AM|PM'), NA, month_russian))
+
+months = checkin %>%
+        distinct(month_russian) %>%
+        filter(!is.na(month_russian))
+
+
+english_months = c('September','November','October','August', 'July','June','May','April','March','February','January','December')
+
+months$english_months = english_months
+```
+
+Combine table and change russian characters to english
+```{r}
+checkin = checkin %>%
+        left_join(months, by = c('month_russian' = 'month_russian')) %>%
+        mutate(timestamp = ifelse(to_change, str_replace(timestamp,month_russian, english_months), timestamp))
+```
+
+
+Create identifier for those with AMPM and remove AMPM from timestamp
+```{r}
+checkin = checkin %>%
+        mutate(AMPM = str_extract(timestamp, 'AM|PM')) %>%
+        mutate(timestamp = ifelse(!is.na(AMPM), str_remove(timestamp, 'AM|PM'), timestamp))
+```
+
+Formats
+- Those with russian letters is in format Day Month Year Hour Minute. 1022 records
+- those with APMP has month, day, year, hour minute format. 1025 records
+- those with UTC is in format year month day hour minute second
+
+Create new column fixed timestamp and populate using timestamp
+```{r warning=FALSE}
+checkin = checkin %>%
+        mutate(fixed_timestamp = if_else(has_utc, ymd_hms(timestamp), NA_real_)) %>% #format for utc
+        mutate(fixed_timestamp = if_else(to_change, dmy_hm(timestamp), fixed_timestamp)) %>%
+        mutate(fixed_timestamp = if_else(!is.na(AMPM), mdy_hm(timestamp), fixed_timestamp))
+```
+
+Remove unnecessary columns
+```{r}
+checkin = checkin %>%
+        select(-month_russian, -english_months) %>%
+        rename(has_russian = to_change)
+```
+
+### Adjust the time based on timezone and AMPM
+
+263 Entries with PM and 762 with AM
+```{r}
+checkin %>%
+        count(AMPM) %>%
+  kable()
+```
+Some AM and PM were just entry errors. Fix timestamp of AM AND PM based on next and previous entries
+
+```{r}
+checkin = checkin %>%
+        mutate(prev_entry = lead(fixed_timestamp)) %>% #create next and prev timestamp
+        mutate(next_entry = lag(fixed_timestamp)) %>%
+        mutate(prev_entry_diff = abs(as.duration(fixed_timestamp - prev_entry))) %>% #compute for time difference
+        mutate(next_entry_diff = abs(as.duration(next_entry - fixed_timestamp))) %>% 
+        mutate(big_diff = prev_entry_diff > hours(3) & next_entry_diff > hours(3)) %>% #counted big difference if both entries are 3 hrs away
+        mutate(fixed_timestamp = if_else((big_diff & !is.na(AMPM) & AMPM == 'AM'), fixed_timestamp - hours(12), fixed_timestamp)) %>% #adjust time
+        mutate(fixed_timestamp = if_else((big_diff & !is.na(AMPM) & AMPM == 'PM'), fixed_timestamp + hours(12), fixed_timestamp)) 
+```
+
+
+Get only needed columns and adjust time for UTC
+```{r}
+checkin = checkin %>%
+        select(-prev_entry, -next_entry, -next_entry_diff, -prev_entry_diff, -big_diff, -AMPM, -has_russian, -has_utc) %>%
+        mutate(fixed_timestamp = fixed_timestamp + hours(8)) %>%
+        rename(raw_timesstamp = timestamp) %>%
+        rename(timestamp = fixed_timestamp) %>%
+        select(timestamp, user, hours, project, raw_timesstamp)
+```
+
+
+### Check hours data
+
+```{r}
+summary(checkin$hours)
+```
+
+30 hrs?
+
+```{r}
+checkin %>%
+        filter(hours > 12) %>%
+        arrange(desc(hours)) %>%
+  head(10) %>%
+  kable()
+```
+All contains the word project. 
+
+## Check project
+
+```{r}
+checkin %>%
+        count(project) %>%
+  arrange(desc(n)) %>%
+  head(15) %>%
+  kable()
+```
+
+There are some typos in the project column
+
+Fix typos
+```{r}
+checkin = checkin %>%
+        mutate(project = str_replace(project, 'blogideas', 'blog-ideas'),
+               project = str_replace(project, '^c(.*)and(.*)','cultureandmanagement'),
+               project = str_replace(project, 'hirng','hiring'),
+               project = str_replace(project, 'internals','internal'),
+               project = str_replace(project, 'machine-learning','machinelearning'),
+               project = str_replace(project, 'misc','miscellaneous'),
+               project = str_replace(project, '^op(.*)min$','opsandadmin'),
+               project = str_replace(project, 'pm','projectmanagement'),
+               project = str_replace(project, 'workshops','workshop'))
+```
+
+Check missing users
+
+```{r}
+checkin %>%
+        mutate(row = row_number()) %>%
+        slice(15790:15810) %>%
+  kable()
+```
+2 missing entries on December 27 with same timein
+
+```{r}
+checkin %>%
+        mutate(row = row_number()) %>%
+        slice(17570:17580) %>%
+  kable()
+```
+Same with last time. Consecutive missing data with same timein. Probably the same person. Cant use previous or next entries for imputation.
+
+There's not much data types to predict 5 missing values
+
+
+[Onto the EDA](https://github.com/idellang/CastanedaTM_Ans/tree/master/CleaningData)
+
+
+
+## Function to summarize data cleaning
+```{r}
+clean_data = function(data){
+        
+        data = data %>%
+                mutate(has_utc = str_detect(timestamp, 'UTC')) %>%
+                mutate(timestamp = str_remove(timestamp,'UTC')) %>%
+                mutate(has_letter = str_detect(timestamp, '[:alpha:]')) %>%
+                mutate(notAMPM = str_detect(timestamp, 'AM|PM', negate =  TRUE)) %>%
+                mutate(to_change = (has_letter & notAMPM)) %>%
+                select(-has_letter, -notAMPM)
+        
+        data = data %>%
+                mutate(month_russian = str_extract(timestamp, '[:alpha:]+')) %>%
+                mutate(month_russian = ifelse(str_detect(month_russian, 'AM|PM'), NA, month_russian))
+        
+        months = data %>%
+                distinct(month_russian) %>%
+                filter(!is.na(month_russian))
+        
+        
+        english_months = c('September','November','October','August', 'July','June','May','April','March','February','January','December')
+        
+        months$english_months = english_months
+        
+        data = data %>%
+                left_join(months, by = c('month_russian' = 'month_russian')) %>%
+                mutate(timestamp = ifelse(to_change, str_replace(timestamp,month_russian, english_months), timestamp))
+        
+        data = data %>%
+                mutate(AMPM = str_extract(timestamp, 'AM|PM')) %>%
+                mutate(timestamp = ifelse(!is.na(AMPM), str_remove(timestamp, 'AM|PM'), timestamp))
+        
+        data = data %>%
+                mutate(fixed_timestamp = if_else(has_utc, ymd_hms(timestamp), NA_real_)) %>% #format for utc
+                mutate(fixed_timestamp = if_else(to_change, dmy_hm(timestamp), fixed_timestamp)) %>%
+                mutate(fixed_timestamp = if_else(!is.na(AMPM), mdy_hm(timestamp), fixed_timestamp))
+        
+        data = data %>%
+                select(-month_russian, -english_months) %>%
+                rename(has_russian = to_change)
+        
+        data = data %>%
+                mutate(prev_entry = lead(fixed_timestamp)) %>% #create next and prev timestamp
+                mutate(next_entry = lag(fixed_timestamp)) %>%
+                mutate(prev_entry_diff = abs(as.duration(fixed_timestamp - prev_entry))) %>% #compute for time difference
+                mutate(next_entry_diff = abs(as.duration(next_entry - fixed_timestamp))) %>% 
+                mutate(big_diff = prev_entry_diff > hours(3) & next_entry_diff > hours(3)) %>% #counted big difference if both entries are 6 hrs away
+                mutate(fixed_timestamp = if_else((big_diff & !is.na(AMPM) & AMPM == 'AM'), fixed_timestamp - hours(12), fixed_timestamp)) %>% #adjust time
+                mutate(fixed_timestamp = if_else((big_diff & !is.na(AMPM) & AMPM == 'PM'), fixed_timestamp + hours(12), fixed_timestamp)) 
+        
+        data = data %>%
+                select(-prev_entry, -next_entry, -next_entry_diff, -prev_entry_diff, -big_diff, -AMPM, -has_russian, -has_utc) %>%
+                mutate(fixed_timestamp = fixed_timestamp + hours(8)) %>%
+                rename(raw_timesstamp = timestamp) %>%
+                rename(timestamp = fixed_timestamp) %>%
+                select(timestamp, user, hours, project)
+        
+        data = data %>%
+                mutate(project = str_replace(project, 'blogideas', 'blog-ideas'),
+                       project = str_replace(project, '^c(.*)and(.*)','cultureandmanagement'),
+                       project = str_replace(project, 'hirng','hiring'),
+                       project = str_replace(project, 'internals','internal'),
+                       project = str_replace(project, 'machine-learning','machinelearning'),
+                       project = str_replace(project, 'misc','miscellaneous'),
+                       project = str_replace(project, '^op(.*)min$','opsandadmin'),
+                       project = str_replace(project, 'pm','projectmanagement'),
+                       project = str_replace(project, 'workshops','workshop'))
+        
+        data
+}
+```
+
+
+
+

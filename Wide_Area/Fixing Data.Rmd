@@ -1,0 +1,160 @@
+---
+title: "Fixing Data"
+author: "Me"
+date: "3/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+rover_status = read_csv('wide_area_roverstatus.csv')
+```
+
+```{r}
+rover_status %>%
+        mutate(GPS_status = ifelse(date(last_report_date) == '2021-03-31','Active','Inactive')) %>%
+        mutate(last_report_date = as.character(last_report_date)) %>%
+        write_csv('wide_area_roverstatus.csv')
+```
+
+```{r}
+zoning = read_csv('wide_area_zoning.csv')
+zoning
+```
+
+
+```{r}
+outliers = boxplot(zoning$duration)$out
+```
+```{r}
+zoning = zoning %>%
+        filter(!(duration %in% outliers))
+```
+
+
+`
+```{r}
+zoning  %>%
+        mutate(startstamp = as.character(startstamp),
+               stopstamp = as.character(stopstamp)) %>%
+        write_csv('wide_area_zoning.csv')
+```
+
+
+```{r}
+zoning %>%
+        count(geofence_category)
+```
+
+```{r}
+zoning = zoning %>%
+        mutate(geofence_category = ifelse(str_detect(geofence_category,'Pick'),'Drop Off Point', geofence_category))
+```
+
+```{r}
+zoning %>%
+        distinct() %>%
+        mutate(startstamp = as.character(startstamp),
+               stopstamp = as.character(stopstamp)) %>%
+        write_csv('wide_area_zoning.csv')
+```
+
+```{r}
+travel = read_csv('wide_area_travel.csv')
+travel = travel %>%
+        distinct()
+```
+
+```{r}
+travel %>%
+        count(origin_category)
+```
+```{r}
+travel %>%
+        filter(destination_name == 'Tanauan Garage') %>%
+        select(travel_duration,distance_travelled,startstamp, stopstamp) %>%
+        mutate(diff = as.duration(stopstamp - startstamp))
+```
+
+```{r}
+travel %>%
+        summarise(mean(travel_duration/60), mean(distance_travelled), sd(travel_duration/60), sd(distance_travelled))
+```
+
+```{r}
+boxplot(travel$travel_duration)
+```
+
+```{r}
+boxplot(travel$distance_travelled)
+```
+
+
+```{r}
+large_travels = travel %>%
+        filter(distance_travelled > 800) %>%
+        distinct(device_alias) %>%
+        pull()
+
+travel %>%
+        filter(device_alias %in% large_travels)
+```
+
+
+```{r}
+travel %>%
+        group_by(origin_name, destination_name) %>%
+        summarise(mean_distance = mean(distance_travelled),
+                  min_distance = min(distance_travelled), 
+                  dev_distance = sd(distance_travelled),
+                  max_distance = max(distance_travelled),
+                  n = n()) %>%
+        filter(n > 1) %>%
+        arrange(desc(dev_distance)) %>%
+        view()
+```
+
+
+```{r}
+travel = travel %>%
+        mutate(origin_category = str_to_title(origin_category)) %>%
+        mutate(origin_category = ifelse(str_detect(origin_category,'Pick'), 'Drop Off Point', origin_category)) %>%
+        filter(origin_category != 'Hotspot')
+```
+
+```{r}
+travel %>%
+        mutate(startstamp = as.character(startstamp),
+               stopstamp = as.character(stopstamp)) %>%
+        write_csv('wide_area_travel.csv')
+```
+
+```{r}
+travel %>%
+        filter(origin_name != destination_name) %>%
+        mutate(startstamp = as.character(startstamp),
+               stopstamp = as.character(stopstamp)) %>%
+        write_csv('wide_area_travel.csv')
+```
+
+
+# Activity
+```{r}
+activity = read_csv('wide_area_activity.csv')
+```
+
+```{r}
+activity %>%
+        distinct() %>%
+        mutate(datestamp = as.character(datestamp)) %>%
+        write_csv('wide_area_activity.csv')
+```
+

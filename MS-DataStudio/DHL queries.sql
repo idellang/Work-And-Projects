@@ -74,7 +74,7 @@ LEFT JOIN
 ON
 	dev.id = ha.device_id
 WHERE 
-	ha.startstamp BETWEEN '2021-01-01' AND '2021-01-05'
+	ha.startstamp BETWEEN '2021-01-01 00:00:00' AND '2021-01-31 00:00:00'
 AND
 	ha.duration > 5
 ORDER BY

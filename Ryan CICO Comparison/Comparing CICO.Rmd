@@ -22,7 +22,7 @@ ryan_cico
 ```{r}
 trans_cico = read_csv('CICO_FROM_GPS/Transpecial_GPS_CICO_DecToJan_ver2.csv')
 pan_cico = read_csv('CICO_FROM_GPS/PAN_GPS_CICO_DecToJan_ver2.csv')
-ehd_cico = read_csv('CICO_FROM_GPS/EHD_GPS_CICO_DecToJan_ver2.csv')
+ehd_cico = read_csv('ehd_cico_march.csv')
 
 
 
@@ -43,7 +43,6 @@ fix_duplicates = function(data){
       
       #select only needed cols
       data = data %>%
-            select(-time_next) %>%
             arrange(plateno, first_timestamp, geofence_name)
       
       # floor to 1 minute
@@ -91,12 +90,7 @@ ehd_cico = read_csv('ehd_cico_march.csv')
 
 ```{r}
 ehd_cico_fixed %>%
-   filter(plateno == 'YJC382')
-```
-
-```{r}
-ryan_cico %>%
-   filter(plateno == 'YJC382')
+   arrange(first_timestamp)
 ```
 
 

@@ -1,0 +1,285 @@
+---
+title: "Cleaning  March Kodigo Data"
+author: "Me"
+date: "3/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+library(lubridate)
+library(data.table)
+```
+
+```{r}
+kodigo = read_csv('input_data/Transpecial-Kodigo-March.csv')
+```
+
+```{r}
+kodigo = kodigo %>%
+      janitor::clean_names() %>%
+      select(freight_order, source_location, source_loc_name, dest_location, dest_loc_name, vehicle_id, source_entrytime)
+```
+
+
+Upload to postgis
+
+```{r}
+upload_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass, password){
+      pgdrv <- dbDriver(drvName = "PostgreSQL")
+      
+      postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = userpass,
+                    password = password)
+      
+      data = data %>%
+            mutate(source_entrytime = as.character(source_entrytime))
+      
+      dbWriteTable(postgrescon, postgis_table, data, row.names=FALSE, append=TRUE)
+}
+
+upload_to_postgis(kodigo, 'march_kodigo', userpass = 'postgres', password = getPass('Password:'))
+```
+
+```{r}
+kodigo
+```
+
+```{r}
+geofences = read_csv('input_data/Nestle-Geofences-Formatted.csv')
+```
+
+```{r}
+geofences_code = geofences %>%
+      select(name, geofence_code)
+```
+
+```{r}
+kodigo = kodigo %>%
+      left_join(geofences_code, by = c('source_location' = 'geofence_code')) %>%
+      rename(source_geofence_name = name) %>%
+      left_join(geofences_code, by = c('dest_location' = 'geofence_code')) %>%
+      rename(dest_geofence_name = name)
+```
+
+```{r}
+map_dbl(kodigo, function(x) sum(is.na(x)))
+```
+
+```{r}
+kodigo = kodigo %>%
+      select(-source_loc_name, -dest_loc_name, -source_location, -dest_location) 
+```
+
+```{r}
+cico_data %>%
+      distinct(plateno) %>%
+      arrange(plateno)
+```
+
+```{r}
+cico_data %>%
+      filter(plateno == 'RLE353')
+```
+
+```{r}
+vehicle_location_group %>%
+   filter(plateno == 'KVW954', datestamp >= '2021-03-17 12:00:00')
+```
+
+```{r}
+kodigo_checking = read_csv('kodigo_checking.csv') %>%
+   janitor::clean_names()
+
+kodigo_checking %>%
+   filter(has_gps_data == 'Yes') %>%
+   filter(has_gps_on_entry_time == 'Yes') %>%
+   filter(str_detect(captured_inside_gps, 'Yes')) %>%
+   count(produced_same_cico)
+```
+
+```{r}
+kodigo_checking
+```
+
+```{r}
+tmsuite_devices = read_csv('tmsuite_devices.csv') %>%
+   janitor::clean_names()
+```
+
+```{r}
+kodigo_checking = kodigo_checking %>%
+   mutate(vehicle_id = str_to_upper(str_replace_all(vehicle_id, ' ','')))
+```
+
+
+
+```{r}
+tmsuite_devices = tmsuite_devices %>%
+   mutate(device_alias = str_to_upper(str_replace_all(device_alias, ' ',''))) %>%
+   select(-last_report)
+
+tmsuite_devices = tmsuite_devices %>%
+   select(-group_name)
+```
+
+```{r}
+kodigo_checking = kodigo_checking %>%
+   left_join(tmsuite_devices, by = c('vehicle_id' = 'device_alias')) %>%
+   distinct()
+```
+
+```{r}
+kodigo_checking %>%
+   filter(is.na(gps_provider))
+```
+
+
+```{r}
+kodigo_checking = kodigo_checking %>%
+   mutate(gps_provider = ifelse(gps_provider == 'null', NA, gps_provider))
+```
+
+```{r}
+kodigo_checking %>%
+   select(vehicle_id, is_in_ngt, gps_provider, gps_status)
+```
+
+```{r}
+kodigo_checking %>%
+   mutate(is_in_ngt = ifelse(is_in_ngt == T, 'Yes','No')) %>%
+   mutate(source_entrytime = as.character(source_entrytime)) %>%
+   write_csv('kodigo_checking.csv')
+```
+
+
+```{r}
+kodigo_checking
+```
+
+
+
+
+
+
+## Adjusted code
+
+```{r}
+vehicle_location_group
+
+vehicle_location_group = vehicle_location_group%>%
+         filter(duration  > 300 & num_points > 5) %>%
+         arrange(plateno, geofence_name, track_period)
+
+vehicle_location_group = vehicle_location_group %>%
+         select(plateno, geofence_name, track_period, time_start, time_end, duration, num_points)  %>%
+         distinct()
+
+ morethan5mins = vehicle_location_group %>%
+      arrange(plateno, track_period)
+ 
+    #Rename column
+morethan5mins = morethan5mins %>%
+         rename(duration_period_at_geofence = duration)
+               
+morethan5mins = morethan5mins %>%
+         group_by(plateno, geofence_name) %>%
+         arrange(plateno, geofence_name)
+   
+morethan5mins = morethan5mins %>%
+      mutate(time_end_previous_location = lag(time_end),
+             time_start_next_location = lead(time_start)) %>%
+      mutate(time_difference_to_next_location = as.duration(time_start_next_location - time_end),
+             time_difference_from_prev_location =as.duration(time_start - time_end_previous_location))
+```
+
+```{r}
+morethan5mins = morethan5mins %>%
+      select(plateno,
+             geofence_name,
+             time_start, 
+             time_end,
+             time_end_previous_location,
+             time_start_next_location,
+             duration_period_at_geofence,
+             time_difference_to_next_location,
+             time_difference_from_prev_location,
+             everything())
+
+
+   
+morethan5mins = morethan5mins %>%
+        mutate(continue_next_location = time_difference_to_next_location < 300,
+               contine_prev_location = time_difference_from_prev_location < 300)  %>%
+      mutate(continue_both_location = contine_prev_location & continue_next_location)
+
+morethan5mins = morethan5mins %>%
+      filter(continue_both_location == F | is.na(continue_both_location))
+
+morethan5mins = morethan5mins %>%
+      group_by(plateno, geofence_name) %>%
+      mutate(actual_time_end = if_else(
+            (is.na(time_end_previous_location) | lead(time_difference_from_prev_location)  < 300) 
+            & !(time_difference_to_next_location > 300), 
+            lead(time_end),
+            time_end
+      )) 
+
+morethan5mins = morethan5mins %>%
+      mutate(actual_time_end = if_else(is.na(time_difference_to_next_location), time_end, actual_time_end))
+
+morethan5mins = morethan5mins%>%
+         filter(!is.na(actual_time_end)) %>%
+         select(plateno, geofence_name, time_start, actual_time_end) %>%
+          mutate(duration_at_geofence = as.duration(actual_time_end - time_start))
+
+
+fixed_data = morethan5mins %>%
+         group_by(plateno, geofence_name, actual_time_end) %>%
+         mutate(rank = rank(desc(duration_at_geofence)))
+   
+   
+   #remove the last entry
+fixed_data = fixed_data %>%
+         filter(rank != 2) 
+   
+   #ungroup and select cols
+fixed_data = fixed_data %>%
+         ungroup() %>%
+         select(plateno, 
+                geofence_name,
+                first_timestamp = time_start, 
+                last_timestamp = actual_time_end, 
+                time_duration_at_geofence = duration_at_geofence)
+   
+fixed_data_arranged = fixed_data %>%
+      arrange(plateno, first_timestamp) %>%
+      group_by(plateno) %>%
+      mutate(time_next = lead(first_timestamp)) %>%
+      mutate(time_next = as.duration(time_next - last_timestamp))
+   
+fixed_data_arranged = fixed_data_arranged %>%
+      arrange(first_timestamp) %>%
+      mutate(first_timestamp = as.character(first_timestamp),
+             last_timestamp = as.character(last_timestamp)) 
+```
+
+```{r}
+fixed_data_arranged %>%
+      filter(plateno == 'ABK4138')
+```
+
+```{r}
+points_inside_geofence %>%
+      filter(plateno == 'ABK4138')
+```
+
+

@@ -1,5 +1,6 @@
 
 -- activity summary
+-- 20k rows
 SELECT 
 	dev.devicealias AS vehicle_plateno,
 	act.datestamp,
@@ -37,6 +38,7 @@ ORDER BY
 	act.datestamp ASC
 
 --ginebra dwell time query
+-- 5.3k rows
 SELECT 
 	dev.devicealias AS vehicle_plateno,
     ha.activity,
@@ -69,7 +71,8 @@ WHERE
 ORDER BY ha.startstamp ASC
 
 
---travel distance
+-- Ginebra travel distance
+-- 30k rows
 SELECT 
 	dev.devicealias AS vehicle_plateno,
 	ha.activity,
