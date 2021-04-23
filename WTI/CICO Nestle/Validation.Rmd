@@ -1,0 +1,122 @@
+---
+title: "Checking changes on tolerance"
+author: "Me"
+date: "2/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidyr)
+```
+
+```{r}
+cico_gps = read_csv('cico_gps_updated.csv')
+cico_gps = cico_gps %>%
+      select(-time_next)
+```
+
+```{r}
+cico_actual = read_csv('TMSUITE_CICO.csv')
+cico_actual = cico_actual %>%
+      arrange(plateno, datestamp)
+
+```
+
+```{r}
+cico_gps = cico_gps %>%
+      arrange(plateno, first_timestamp)
+```
+
+
+Change col name
+```{r}
+cico_gps = cico_gps %>%
+      rename_with( ~paste0('gps_',.x))
+cico_gps
+```
+
+```{r}
+cico_actual = cico_actual %>%
+      rename_with( ~paste0('actual_',.x)) %>%
+      select(1:3)
+
+cico_actual
+```
+
+
+```{r}
+all_data = cico_gps %>%
+   full_join(cico_actual, by = c('gps_plateno' = 'actual_plateno', 'gps_geofence_name' = 'actual_location'), keep = TRUE) %>%
+      select(gps_plateno,
+             cico_plateno = actual_plateno,
+             geofence_name = gps_geofence_name,
+             location = actual_location,
+             gps_first_timestamp,
+             actual_datestamp,
+             everything()
+             )
+```
+
+Get time difference
+```{r}
+all_data = all_data %>%
+      mutate(time_difference = as.duration(gps_first_timestamp - actual_datestamp)) %>%
+      mutate(abs_time_difference = abs(time_difference))
+```
+```{r}
+all_data %>%
+   distinct() %>%
+   filter(abs_time_difference < duration(minutes = 10))
+```
+
+
+Get the minimum time difference per group
+```{r}
+ranking1 = all_data %>%
+      distinct() %>%
+      group_by(gps_plateno, cico_plateno, geofence_name, location) %>%
+      filter(abs_time_difference < duration(week = 1)) %>%
+      mutate(ranking = rank(abs_time_difference, ties.method = 'first')) %>%
+      filter(ranking == 1)
+
+ranking1 %>%
+   filter(abs_time_difference < duration(hours = 1)) %>%
+      ungroup() %>%
+      ggplot(aes(abs_time_difference))+
+      geom_histogram()+
+   scale_y_continuous(breaks = c(0,50,150,200,250, 275, 300))
+```
+
+
+
+```{r}
+all_data = cico_actual %>%
+      distinct() %>%
+      left_join(cico_gps, by = c('actual_plateno' = 'gps_plateno', 'actual_location' = 'gps_geofence_name'),
+                keep =   TRUE) %>%
+      select(actual_plateno,
+             actual_location, 
+             gps_geofence_name,
+             actual_datestamp, 
+             gps_first_timestamp,
+             everything())
+```
+
+```{r}
+ranking2 = all_data %>%
+      distinct() %>%
+      mutate(time_difference = as.duration(gps_first_timestamp - actual_datestamp)) %>%
+      filter(actual_location == gps_geofence_name) %>%
+      mutate(abs_time_difference = abs(time_difference)) %>%
+      group_by(actual_plateno, actual_location) %>%
+      mutate(ranking = rank(abs_time_difference, ties.method = 'first')) %>%
+      filter(ranking == 1) %>%
+      filter(time_difference < 0)
+
+ranking2
+```

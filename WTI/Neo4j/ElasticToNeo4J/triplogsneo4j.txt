@@ -1,0 +1,127 @@
+LOAD CSV WITH HEADERS
+FROM 'file:///triplogsneo4j.csv'
+AS line
+MERGE(l1:Location{name:line.location})
+MERGE(l2:Location{name:line.next_location})
+
+
+LOAD CSV WITH HEADERS
+FROM 'file:///triplogsneo4j.csv'
+AS line
+MATCH(l1:Location{name:line.location})
+MATCH(l2:Location{name:line.next_location})
+MERGE(l1)-[t:TRIP]->(l2)
+ON CREATE SET 
+    t.plate_no = line.plateno,
+    t.loc1_date = datetime({ epochMillis: apoc.date.parse(line.loc1_datestamp, 'ms', 'yyyy-MM-dd HH:mm:ss')}),
+    t.loc2_date = datetime({ epochMillis: apoc.date.parse(line.loc2_datestamp, 'ms', 'yyyy-MM-dd HH:mm:ss')}),
+    t.group_names = apoc.convert.fromJsonList('[' + line.group_names + ']')
+	
+		
+LOAD CSV WITH HEADERS
+FROM 'file:///triplogsneo4j.csv'
+AS line
+WITH '[' + line.group_names + ']' AS groups
+RETURN apoc.convert.fromJsonList(groups)
+LIMIT 10	
+
+
+LOAD CSV WITH HEADERS
+FROM 'file:///triplogsneo4j.csv'
+AS line
+MATCH(l1:Location{name:line.location})
+MATCH(l2:Location{name:line.next_location})
+MERGE(l1)-[t:TRIP]->(l2)
+ON CREATE SET 
+    t.plate_no = line.plateno,
+    t.loc1_date = datetime({ epochMillis: apoc.date.parse(line.loc1_datestamp, 'ms', 'yyyy-MM-dd HH:mm:ss')}),
+    t.loc2_date = datetime({ epochMillis: apoc.date.parse(line.loc2_datestamp, 'ms', 'yyyy-MM-dd HH:mm:ss')}),
+    t.group_names = apoc.convert.fromJsonList('[' + line.group_names + ']')
+	
+---SAMPLE QUERIES
+--plate number	
+MATCH path=  ((:Location)-[t:TRIP]->(:Location))
+WHERE t.plate_no = 'DAM1599'
+RETURN path	
+
+--plate number with date
+MATCH path =  ((:Location)-[t:TRIP]->(:Location))
+WHERE t.plate_no = 'DAM1599' 
+AND DATE('2020-12-10') > DATE(t.loc1_date) > DATE('2020-12-03')
+RETURN path
+
+--
+MATCH path =  ((:Location)-[t:TRIP]->(:Location))
+WHERE t.plate_no CONTAINS 'ABC'
+RETURN path
+
+-- date and plate number tabular format
+MATCH path =  ((l1:Location)-[t:TRIP]->(l2:Location))
+WHERE t.plate_no = 'DAM1599' 
+AND DATE('2020-12-10') > DATE(t.loc1_date) > DATE('2020-12-03')
+RETURN l1.name, t.loc1_date, l2.name, t.loc2_date
+ORDER BY t.loc1_date
+
+-- number of trips by vehicle on dates
+MATCH path =  ((l1:Location)-[t:TRIP]->(l2:Location))
+WHERE DATE('2020-12-20') > DATE(t.loc1_date) > DATE('2020-12-03')
+WITH t.plate_no AS plate_no, count(path) AS num_trips
+RETURN plate_no, num_trips
+ORDER BY num_trips DESC
+LIMIT 100
+
+-- number of distinct locations by vehicle
+MATCH path =  ((l1:Location)-[t:TRIP]-(l2:Location))
+WITH t.plate_no AS plate_no, count(DISTINCT(l1.name)) AS num_source, count(DISTINCT(l1.name)) AS num_destination
+RETURN plate_no, num_source, num_destination
+ORDER BY num_source DESC, num_destination DESC
+
+--plate number and destination
+MATCH path =  ((l1:Location)-[t:TRIP]-(l2:Location))
+WHERE t.plate_no = 'NBN5760' AND l2.name CONTAINS 'Puregold'
+RETURN path
+
+
+-- trips per day
+MATCH path =  ((l1:Location)-[t:TRIP]->(l2:Location))
+WITH count(path) AS trips, DATE(t.loc1_date) as travel_date
+RETURN travel_date, trips
+ORDER BY travel_date
+
+--plate number and groups 
+MATCH path =  ((l1:Location)-[t:TRIP]->(l2:Location))
+WHERE DATE('2020-12-10')>= DATE(t.loc1_date) >= DATE('2020-11-30')
+UNWIND t.group_names AS groups
+RETURN t.plate_no, COLLECT(DISTINCT(groups))
+
+--trips containing transpecial
+MATCH path =  ((l1:Location)-[t:TRIP]->(l2:Location))
+WHERE DATE('2020-12-05')>= DATE(t.loc1_date) >= DATE('2020-11-30')
+UNWIND t.group_names AS party
+WITH party, path
+WHERE party CONTAINS 'Transpecial'
+RETURN path
+
+-- number of trips by party 
+MATCH path =  ((l1:Location)-[t:TRIP]->(l2:Location))
+WHERE DATE('2020-12-10')>= DATE(t.loc1_date) >= DATE('2020-11-30')
+UNWIND t.group_names AS party
+WITH party, count(path) AS num_trips
+RETURN party, num_trips
+ORDER BY num_trips DESC
+LIMIT 50
+
+--same timestamp
+MATCH path =  ((:Location)-[t:TRIP]->(:Location))
+WHERE t.loc1_date = t.loc2_date
+RETURN path
+LIMIT 500
+
+
+-- Can answer
+- pathways by vehicle
+- pathways on certain date by certain vehicles
+- check if vehicle passed through a location on a certain date 
+- check when a vehicle passed through a location
+- number of trips per vehicle
+- number of trips per day

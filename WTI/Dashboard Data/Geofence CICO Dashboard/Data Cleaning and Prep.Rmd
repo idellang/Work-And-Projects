@@ -1,0 +1,75 @@
+---
+title: "Geofence Dashboard EDA"
+author: "Me"
+date: "4/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+nestle_geofences = read_csv('Nestle-Geofences-Formatted.csv')
+nestle_geofences = nestle_geofences %>%
+      select(name, category, geofence_code, address, group_names, barangay, municipality,province, region)
+```
+
+```{r}
+nestle_geofences
+```
+
+```{r}
+verification = read_csv('Nestle-Geofence-Verification.csv')
+verification = verification %>%
+      janitor::clean_names()
+```
+
+```{r}
+verification = verification %>%
+      left_join(nestle_geofences, by = c('dropoff' = 'name'))
+```
+
+```{r}
+verification = verification %>%
+      filter(complete.cases(.))
+
+verification
+```
+
+
+```{r}
+verification = verification %>%
+      mutate(verified_via_triplog = ifelse(1, 'Verified via Triplog','Not Verified via Triplog'),
+             verified_via_universal_geofence = ifelse(1,'Verified via Universal Geofence','Not Verified via Universal Geofence'))
+```
+
+
+```{r}
+verification = verification %>%
+      mutate(barangay = str_to_title(barangay),
+             municipality = str_to_title(municipality),
+             province = str_to_title(province))
+```
+
+```{r}
+verification %>%
+      distinct(dropoff, .keep_all = T) %>%
+      count(verified_via_triplog)
+```
+
+
+```{r}
+verification %>%
+      write_csv('nestle_geofence_verification.csv')
+```
+
+```{r}
+verification
+```
+

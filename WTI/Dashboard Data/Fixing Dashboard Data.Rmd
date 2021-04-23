@@ -1,0 +1,53 @@
+---
+title: "Fixing Dashboard Data"
+author: "Me"
+date: "4/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+data = read_csv('Sample/DataStudio_EvenCapture_March1-April20.csv')
+```
+
+```{r}
+data %>%
+        count(Trackable_FO)
+```
+
+```{r}
+data
+```
+
+
+```{r}
+data %>%
+        select(if_Trackable, Trackable, `Partially Trackable`)
+```
+
+
+```{r}
+data %>%
+        count(pickup_binned) %>%
+        arrange(desc(n)) %>%
+        filter(!is.na(pickup_binned))
+```
+
+
+```{r}
+map_dbl(data, function(x) sum(is.na(x)))
+```
+
+
+
+

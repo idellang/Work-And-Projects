@@ -1,0 +1,273 @@
+---
+title: "Geofence Verification"
+author: "Me"
+date: "3/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+library(lubridate)
+library(data.table)
+```
+
+
+Load the data
+
+```{r}
+data = read_csv('input_data/Nestle-CICO-JantoFeb-FIX.csv')
+head(data)
+```
+
+```{r}
+format_data = function(data){
+      
+      data = data %>%
+            select(created, plateno, group_names, alert_msgs,longitude, latitude)
+      
+      #switch long and lat
+      data = data %>%
+            mutate(longitude_fix = ifelse(longitude < 100, latitude, longitude),
+                   latitude_fix = ifelse(latitude > 100, longitude, latitude)) %>%
+            select(-longitude, -latitude) %>%
+            rename(longitude = longitude_fix, 
+                   latitude = latitude_fix)
+      
+      return(data)
+}
+
+formatted_data = format_data(data)
+
+formatted_data
+```
+
+
+Upload to postgis
+```{r}
+gps_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass, password){
+      pgdrv <- dbDriver(drvName = "PostgreSQL")
+      
+      postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = userpass,
+                    password = password)
+      
+      data = data %>%
+            mutate(created = as.character(created))
+      
+      dbWriteTable(postgrescon, postgis_table, data, row.names=FALSE, append=TRUE)
+}
+
+gps_to_postgis(formatted_data, 'geofence_verification_staging', userpass = 'postgres', password = getPass('Password:'))
+```
+
+```{r}
+formatted_data
+```
+
+
+Query for creating tables in postgresql
+
+CREATE TABLE geofence_verification
+(
+    created text,
+   	geom geometry(point,4326),
+	plateno text,
+	group_names text,
+	alert_msgs text
+	
+);
+
+INSERT INTO geofence_verification
+SELECT 
+	created,
+	ST_TRANSFORM(ST_SETSRID(ST_POINT(longitude, latitude), 4326), 4326) AS geom,
+	plateno,
+	group_names,
+	alert_msgs
+FROM geofence_verification_staging
+
+## Extract data
+
+```{r}
+formatted_data %>%
+      arrange(plateno, created)
+```
+
+
+
+```{r}
+query = 'SELECT 
+	t.created,
+	t.plateno,
+	t.group_names,
+	t.alert_msgs,
+	g.name AS geofence_name
+FROM 
+	geofence_verification_geom AS t
+JOIN
+	nestle_geofences_updated AS g
+ON 
+	ST_INTERSECTS(t.geom, ST_BUFFER(g.geom, .0005))
+	'
+
+get_gps_inside_geofence = function(userpass, password, query){
+   pgdrv <- dbDriver(drvName = "PostgreSQL")
+   postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = userpass,
+                    password = password)
+   
+   points_in_geofences <- dbGetQuery(postgrescon, query)
+ 
+   points_in_geofences = points_in_geofences %>%
+      mutate(created = ymd_hms(created))
+      
+   points_in_geofences = points_in_geofences %>%
+      arrange(created)
+     
+   return(points_in_geofences)
+}
+
+points_inside_geofence = get_gps_inside_geofence(userpass = 'postgres', password = getPass('Password:'), query = query)
+```
+
+```{r}
+vehicle_location_group = points_inside_geofence %>%
+   mutate(track_period = floor_date(created, '1 hour')) %>%
+   group_by(plateno, geofence_name, track_period) %>%
+   mutate(time_start = min(created),
+          time_end = max(created),
+          num_points = n()) %>%
+   mutate(duration = as.duration(time_end - time_start))
+```
+
+```{r}
+vehicle_location_group = read_csv('points_grouped.csv')
+```
+
+Get distinct groups
+```{r}
+vehicle_location_group = vehicle_location_group %>%
+      select(-created) %>%
+      arrange(plateno, geofence_name, track_period) %>%
+      distinct()
+
+vehicle_location_group = vehicle_location_group %>%
+      rename(dwell_time = duration)
+```
+
+```{r}
+morethan5mins = vehicle_location_group %>%
+         group_by(plateno, geofence_name) %>%
+         arrange(plateno, geofence_name)
+   
+morethan5mins = morethan5mins %>%
+   mutate(time_end_previous_location = lag(time_end),
+          time_start_next_location = lead(time_start)) %>%
+   mutate(time_difference_to_next_location = as.duration(time_start_next_location - time_end),
+          time_difference_from_prev_location =as.duration(time_start - time_end_previous_location)) 
+```
+
+```{r}
+ morethan5mins = morethan5mins %>%
+      select(plateno,
+             geofence_name,
+             time_start, 
+             time_end,
+             time_end_previous_location,
+             time_start_next_location,
+             dwell_time,
+             time_difference_to_next_location,
+             time_difference_from_prev_location,
+             everything())
+```
+
+```{r}
+morethan5mins = morethan5mins %>%
+      mutate(continue_next_location = time_difference_to_next_location < 300,
+             contine_prev_location = time_difference_from_prev_location < 300)  %>%
+    mutate(continue_both_location = contine_prev_location & continue_next_location)
+
+ #filter out data to record only entry and exit 
+morethan5mins = morethan5mins %>%
+ filter(continue_both_location == F | is.na(continue_both_location))
+
+#compute for actual end time
+morethan5mins = morethan5mins %>%
+ group_by(plateno, geofence_name) %>%
+ mutate(actual_time_end = if_else(
+ (is.na(time_end_previous_location) | lead(time_difference_from_prev_location)  < 300) 
+ & !(time_difference_to_next_location > 300), 
+ lead(time_end),
+ time_end
+ )) 
+#filter no actual time end because they are the last for that location
+#select relevant columns
+#compute for duration at geofence
+morethan5mins = morethan5mins%>%
+ filter(!is.na(actual_time_end)) %>%
+ select(plateno, geofence_name, time_start, actual_time_end) %>%
+ mutate(dwell_time = as.duration(actual_time_end - time_start))
+
+#create ranking based on duration
+fixed_data = morethan5mins %>%
+ group_by(plateno, geofence_name, actual_time_end) %>%
+ mutate(rank = rank(desc(dwell_time)))
+
+
+#remove the last entry
+fixed_data = fixed_data %>%
+         filter(rank != 2) 
+
+fixed_data = fixed_data %>%
+       ungroup() %>%
+       select(plateno, 
+              geofence_name,
+              first_timestamp = time_start, 
+              last_timestamp = actual_time_end, 
+              time_duration_at_geofence = dwell_time)
+```
+
+```{r}
+fixed_data %>%
+      arrange(first_timestamp) %>%
+      mutate(first_timestamp = as.character(first_timestamp),
+             last_timestamp = as.character(last_timestamp)) 
+```
+
+```{r}
+fixed_data %>%
+      write_csv('CICO_OUTPUT.csv')
+```
+
+```{r}
+fixed_data %>%
+      filter(time_duration_at_geofence > 1000)
+```
+
+
+```{r}
+geofence_verified = read_csv('CICO_OUTPUT.csv')
+geofence_verified %>%
+      select(-plateno) %>%
+      filter(time_duration_at_geofence > 900) %>%
+      distinct(geofence_name) %>%
+      write_csv('geofences_at_15min_threshold.csv')
+```
+
+
+```{r}
+geofence_verified %>%
+      distinct(geofence_name) %>%
+      write_csv('All_geofences.csv')
+```
+

@@ -1,0 +1,218 @@
+---
+title: "Data Formatting"
+author: "Me"
+date: "12/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(janitor)
+library(tidyverse)
+```
+
+```{r}
+data = read_csv('all_data.csv') %>%
+      clean_names()
+```
+
+#Haulers id
+
+```{r}
+hauler_id = data %>%
+      select(haulers, hauler_subsidiary, hauler_under_industry, customer_hauler) %>%
+      stack() %>%
+      select(name = values) %>%
+      distinct(name) %>%
+      filter(!is.na(name)) %>%
+      mutate(id = 1:nrow(.))
+
+hauler_id%>%
+      write_csv('haulers_id.csv')
+```
+
+
+#conglomerate
+```{r}
+conglomerate_id = data %>%
+      select(contains('conglomerate')) %>%
+      stack() %>%
+      select(name = values) %>%
+      distinct(name) %>%
+      filter(!is.na(name)) %>%
+      mutate(id = 1:nrow(.))
+
+conglomerate_id%>%
+      write_csv('conglomerate_id.csv')
+```
+
+
+#product
+```{r}
+product_id = data %>%
+      select(name = product) %>%
+      distinct(name) %>%
+      filter(!is.na(name)) %>%
+      mutate(id = 1:nrow(.)) 
+
+product_id%>%
+      write_csv('product_id.csv')
+```
+
+#industry
+```{r}
+industry_id = data %>%
+      select(name = industry) %>%
+      distinct(name) %>%
+      filter(!is.na(name)) %>%
+      mutate(id = 1:nrow(.))
+
+industry_id%>%
+      write_csv('industry_id.csv')
+```
+
+
+```{r}
+company_id = data %>%
+      select(hauling_client_company, company_subsidiary, 
+             company, partner_company, client_company,
+             subsidiary_company, company_under_industry, customer_company) %>%
+      stack() %>%
+      select(name = values) %>%
+      distinct(name) %>%
+      filter(!is.na(name)) %>%
+      mutate(id = 1:nrow(.))
+
+company_id%>%
+      write_csv('company_id.csv')
+```
+
+# hauler hauling client
+
+```{r}
+data %>%
+      select(haulers, hauling_client_company) %>%
+      filter(complete.cases(.)) %>%
+      distinct(.) %>%
+      left_join(hauler_id, by = c('haulers' = 'name')) %>%
+      left_join(company_id, by = c('hauling_client_company' = 'name')) %>%
+      rename(hauler_id = id.x, hauling_client_company_id = id.y) %>%
+      write_csv('hauler_hauling_client.csv')
+```
+#conglomerate subsidiary company
+```{r}
+data %>%
+      select(conglomerate, company_subsidiary) %>%
+      filter(complete.cases(.)) %>%
+      distinct() %>%
+      left_join(conglomerate_id, by = c('conglomerate' = 'name')) %>%
+      left_join(company_id, by = c('company_subsidiary' = 'name')) %>%
+      rename(conglomerate_id = id.x, company_subsidiary_id = id.y) %>%
+      write_csv('conglomerate_subsidiary_company.csv')
+```
+
+#conglomerate subsidiary hauler
+```{r}
+data %>%
+      select(conglomerate, hauler_subsidiary) %>%
+      filter(complete.cases(.)) %>%
+      distinct() %>%
+      left_join(conglomerate_id, by = c('conglomerate' = 'name')) %>%
+      left_join(hauler_id, by = c('hauler_subsidiary' = 'name')) %>%
+      rename(conglomerate_id = id.x, hauler_subsidiary_id = id.y) %>%
+      write_csv('conglomerate_subsidiary_hauler.csv')
+```
+
+#industry company under industry
+```{r}
+data %>%
+      select(industry, company_under_industry) %>%
+      filter(complete.cases(.)) %>%
+      distinct() %>%
+      left_join(industry_id, by = c('industry' = 'name')) %>%
+      left_join(company_id, by = c('company_under_industry' = 'name')) %>%
+      rename(industry_id = id.x, company_under_industry_id = id.y) %>%
+      write_csv('industry_company.csv')
+```
+
+
+#industry hauler under industry
+```{r}
+data %>%
+      select(industry, hauler_under_industry) %>%
+      filter(complete.cases(.)) %>%
+      distinct() %>%
+      left_join(industry_id, by = c('industry' = 'name')) %>%
+      left_join(hauler_id, by = c('hauler_under_industry' = 'name')) %>%
+      rename(industry_id = id.x, hauler_under_industry_id = id.y) %>%
+      write_csv('industry_hauler.csv')
+```
+
+
+#product company
+```{r}
+data %>%
+      select(product, customer_company, status, units_under_wti) %>%
+      filter(!is.na(customer_company)) %>%
+      left_join(product_id, by = c('product' = 'name')) %>%
+      left_join(company_id, by = c('customer_company'= 'name')) %>%
+      rename(product_id = id.x, customer_company_id = id.y) %>%
+      write_csv('product_customer_company.csv')
+```
+
+#producy hauler
+```{r}
+data %>%
+      select(product, customer_hauler, status, units_under_wti) %>%
+      filter(!is.na(customer_hauler)) %>%
+      left_join(product_id, by = c('product' = 'name')) %>%
+      left_join(hauler_id, by = c('customer_hauler'= 'name')) %>%
+      rename(product_id = id.x, customer_hauler_id = id.y) %>%
+      distinct() %>%
+      write_csv('product_customer_hauler.csv')
+```
+
+#company partner company
+```{r}
+data %>%
+      select(company, partner_company) %>%
+      filter(complete.cases(.)) %>%
+      left_join(company_id, by = c('company' = 'name')) %>%
+      left_join(company_id, by = c('partner_company' = 'name')) %>%
+      rename(company_id = id.x, partner_company_id = id.y) %>%
+      write_csv('company_partner_company.csv')
+```
+
+#company partner conglomerate
+```{r}
+data %>%
+      select(company, partner_conglomerate) %>%
+      filter(complete.cases(.)) %>%
+      left_join(company_id, by = c('company' = 'name')) %>%
+      left_join(conglomerate_id, by = c('partner_conglomerate' = 'name')) %>%
+      rename(company_id = id.x, partner_conglomerate_id = id.y) %>%
+      write_csv('company_partner_conglomerate.csv')
+```
+
+#company client company
+```{r}
+data %>%
+      select(company, client_company) %>%
+      filter(complete.cases(.)) %>%
+      left_join(company_id, by = c('company' = 'name')) %>%
+      left_join(company_id, by = c('client_company' = 'name')) %>%
+      rename(company_id = id.x, client_company_id = id.y) %>%
+      write_csv('company_client_company.csv')
+```
+
+
+#company subsidiary company
+```{r}
+data %>%
+      select(company, subsidiary_company) %>%
+      filter(complete.cases(.))
+```
+

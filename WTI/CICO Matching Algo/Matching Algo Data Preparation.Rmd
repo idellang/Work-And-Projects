@@ -1,0 +1,238 @@
+---
+title: "Matching Algo cleaning data"
+author: "Me"
+date: "2/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+library(elastic)
+library(elasticsearchr)
+library(jsonlite)
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(data.table)
+library(lubridate)
+library(getPass)
+
+conn = connect(
+host = "tmsuite-elasticsearch.trackme.com.ph",
+port = 443,
+path = NULL,
+transport_schema = "https",
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
+headers = NULL,
+cainfo = NULL,
+force = FALSE,
+errors = "simple",
+warn = TRUE
+)
+```
+
+Load cico generated using GPS data
+```{r}
+data = read_csv('data_sdg_geofence/Transpecial_GPS_CICO_DecToJan.csv')
+dim(data)
+```
+
+Make a table that looks like FO data
+```{r}
+data = data %>%
+      select(plateno, geofence_name, pattern,
+             entry_time = first_timestamp)
+
+cico = data
+```
+
+```{r}
+cico_to_fo = cico %>%
+   select(plateno, geofence_name, entry_time, pattern) %>%
+   arrange(plateno, entry_time) %>%
+   mutate(source = ifelse(pattern == 1, geofence_name, NA)) %>%
+   mutate(source_entrytime = if_else(pattern == 1, as.character(entry_time), NA_character_)) %>%
+   group_by(plateno) %>%
+   fill(source) %>%
+   fill(source_entrytime) %>%
+   mutate(consec_pickup = ifelse(((pattern == 1 & lead(pattern) == 1) & plateno == lead(plateno)), TRUE, FALSE))
+```
+
+```{r}
+cico_to_fo %>%
+      write_csv('cico_to_fo.csv')
+```
+
+
+# Process FO data
+
+get arrival and location
+```{r}
+trans_fo = read_csv('data_sdg_geofence/Transpecial-FO-Jan2021.csv')
+
+trans_fo = trans_fo %>%
+   select(trip_number, vehicle_plate_no,so_number,dropoffs, pickups)
+
+trans_fo = trans_fo  %>%
+   mutate(dropoffs = str_remove_all(dropoffs,"\\'")) %>%
+   mutate(dropoff_date = str_extract(dropoffs,
+                                  'arrival: [:digit:]{4}-[:digit:]{2}-[:digit:]{2} [:digit:]{2}:[:digit:]{2}:[:digit:]{2}')) %>%
+   mutate(dropoff_name = str_extract(dropoffs,'name: .*')) %>%
+   mutate(dropoff_name = str_split(dropoff_name, ',')) %>%
+   unnest(dropoff_name) %>%
+   filter(str_detect(dropoff_name,'name:'))
+
+trans_fo = trans_fo %>%
+     mutate(pickups = str_remove_all(pickups,"\\'")) %>%
+   mutate(pickups_date = str_extract(pickups,
+                                  'arrival: [:digit:]{4}-[:digit:]{2}-[:digit:]{2} [:digit:]{2}:[:digit:]{2}:[:digit:]{2}')) %>%
+   mutate(pickups_name = str_extract(pickups,'name: .*')) %>%
+   mutate(pickups_name = str_split(pickups_name, ',')) %>%
+   unnest(pickups_name) %>%
+   filter(str_detect(pickups_name,'name:')) %>%
+   select(-dropoffs, -pickups)
+
+#process dates
+trans_fo = trans_fo %>%
+   mutate(dropoff_date = ymd_hms(dropoff_date)) %>%
+   mutate(pickup_date = ymd_hms(pickups_date)) %>%
+   select(-pickups_date)
+
+#clean names
+trans_fo = trans_fo %>%
+   mutate(dropoff_name = str_remove(dropoff_name,'name:')) %>%
+   mutate(pickup_name = str_remove(pickups_name,'name:')) %>%
+   select(-pickups_name)
+```
+
+# Use data from query
+
+Select needed cols
+```{r}
+query = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"match_phrase\": {\"client_name\": \"Transpecial Inc.\"}}, {\"nested\": {\"path\": \"pickups\", \"query\": {\"range\": {\"pickups.arrival\": {\"gte\": \"2021-01-01 00:00:00\", \"lt\": \"2021-01-31 23:59:59\", \"time_zone\": \"+08:00\"}}}}}, {\"match_phrase\": {\"group_names\": \"Nestle\"}}, {\"range\": {\"created\": {\"gte\": \"2020-11-30T16:00:00.000Z\", \"lte\": \"2021-02-11T08:17:04.602Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+
+data = data = Search(conn, index = 'tmsuite_booking*', body = query, , raw = TRUE)
+
+data = fromJSON(data)
+data = data$hits$hits$`_source`
+
+data = data %>%
+   select(trip_number, vehicle_plate_no, pickups, dropoffs, so_number)
+
+#get pickup
+data = data %>%
+   unnest_wider(pickups, names_repair = tidyr_legacy) %>%
+   select(trip_number, vehicle_plate_no, so_number,  pickup_arrival = arrival, pickup_name = name, dropoffs)
+
+#get dropoffs
+data = data %>%
+   unnest_wider(dropoffs, names_repair = tidyr_legacy) %>%
+   select(trip_number, vehicle_plate_no, so_number, pickup_arrival, pickup_name, dropoff_arrival = arrival, dropoff_name = name)
+
+transpecial_fo = data
+```
+
+
+# Process bookings data
+
+Get only rows with complete data
+```{r}
+transpecial_fo = transpecial_fo %>%
+   filter(!is.na(pickup_name), !is.na(dropoff_name))
+```
+
+Add 8 hours to time
+```{r}
+transpecial_fo = transpecial_fo %>%
+   mutate(pickup_arrival = ymd_hms(pickup_arrival) + hours(8),
+          dropoff_arrival = ymd_hms(dropoff_arrival) + hours(8))
+
+transpecial_fo %>%
+   summarise(min(pickup_arrival),
+             max(pickup_arrival))
+# transpecial_fo %>%
+#    write_csv('transpecial_fo.csv')
+```
+
+
+# Compare transpecial FO with actual bookings
+
+```{r}
+fo_locations = transpecial_fo %>%
+   select(pickup_name, dropoff_name) %>%
+   stack() %>%
+   distinct() %>%
+   select(fo_locations = values)
+
+cico_locations = cico %>%
+   distinct(geofence_name) %>%
+   rename(cico_locations = geofence_name)
+
+cico_locations %>%
+   mutate(is_in_fo = .$cico_locations %in% fo_locations$fo_locations) %>%
+   filter(is_in_fo == F)
+```
+There are 42 CICO locations that are not in FO
+
+Try to remove -source destination next time.
+
+
+Check how many trips were without matching locations
+```{r}
+cico_to_fo %>%
+   select(geofence_name, source) %>%
+   filter(!is.na(plateno), !is.na(geofence_name), !is.na(source)) %>%
+   mutate(is_in_fo1 = geofence_name %in% fo_locations$fo_locations,
+          is_in_fo2 = geofence_name %in% fo_locations$fo_locations) %>%
+   filter(is_in_fo1 == T & is_in_fo2 == T) %>%
+   filter(geofence_name != source)
+```
+
+Only 962 have both their locations in the FO data.
+
+
+# Process data for exporting
+```{r}
+cico %>%
+   mutate(entry_time = as.character(entry_time)) %>%
+   write_csv('trans_cico.csv')
+
+cico_to_fo %>%
+   select(source_geofence = source,
+          source_entry_time = source_entrytime,
+          dest_geofence = geofence_name,
+          dest_entry_time = entry_time,
+          plateno,
+          everything()) %>%
+   mutate(source_entry_time = as.character(source_entry_time),
+          dest_entry_time = as.character(dest_entry_time)) %>%
+   write_csv('trans_cico_fo.csv')
+
+transpecial_fo %>%
+   mutate(dropoff_arrival = as.character(dropoff_arrival),
+          pickup_arrival = as.character(pickup_arrival)) %>%
+   write_csv('trans_fo.csv')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

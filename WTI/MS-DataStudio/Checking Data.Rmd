@@ -1,0 +1,134 @@
+---
+title: "Checking data"
+author: "Me"
+date: "3/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+```
+
+```{r}
+activity = read_csv('SanMiguel_Activity_Summary.csv')
+activity %>%
+        filter(activity == 'DISTANCE TRAVELLED') %>%
+        ggplot(aes(datestamp, event_count))+
+        geom_col()
+```
+
+```{r}
+activity = activity %>%
+        mutate(division_name = str_replace_all(division_name, '_',' ')) %>%
+        mutate(vehicle_plateno = word(vehicle_plateno, 1)) %>%
+        mutate(datestamp = as.character(datestamp))
+
+activity %>%
+        write_csv('ginebra_activity.csv')
+```
+
+```{r}
+activity %>%
+        group_by(vehicle_plateno) %>%
+        summarise(dt= sum(event_count)) %>%
+        arrange(desc(dt))
+```
+
+
+```{r}
+dwell_time = read_csv('SanMiguel_Geofence_Dwell_time.csv')
+```
+
+```{r}
+dwell_time %>%
+         mutate(division_name = str_replace_all(division_name, '_',' ')) %>%
+        mutate(vehicle_plateno = word(vehicle_plateno, 1)) %>%
+        mutate(startstamp = as.character(startstamp),
+               stopstamp = as.character(stopstamp)) %>%
+        write_csv('ginebra_dwell_time.csv')
+```
+
+
+```{r}
+dwell_time %>%
+        distinct(geofence_name)
+```
+
+
+```{r}
+travel_distance = read_csv('SanMiguelTravelDistance.csv')
+
+travel_distance = travel_distance %>%
+        mutate(vehicle_plateno = word(vehicle_plateno, 1)) %>%
+        mutate(division_name = str_replace_all(division_name, '_',' ')) %>%
+        mutate(day_date = date(startstamp)) %>%
+        mutate(startstamp = as.character(startstamp),
+               stopstamp = as.character(stopstamp),
+               day_date = as.character(day_date))
+
+travel_distance = travel_distance %>%
+        filter(origin_category %in% c('Home Base', 'Uncategorized','Drop Off Point','Stop Points', 'Hotspot')) %>%
+        filter(destination_category %in% c('Home Base', 'Uncategorized','Drop Off Point','Stop Points', 'Hotspot'))
+```
+
+
+```{r}
+travel_distance = travel_distance %>%
+        distinct()
+
+travel_distance = travel_distance %>%
+        filter(origin_name != destination_name)
+
+travel_distance %>%
+        write_csv('ginebra_travel_fixed_3.csv')
+```
+
+
+
+
+```{r}
+travel_distance %>%
+        filter(origin_name == 'Niessel Bogo', destination_name =='MANDAUE PLANT - GSMI CEBU')
+```
+
+```{r}
+travel_distance %>%
+        distinct()
+```
+
+```{r}
+travel_distance %>%
+        distinct() %>%
+        arrange(desc(traveled_distance))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

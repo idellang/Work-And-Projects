@@ -1,0 +1,363 @@
+---
+title: "Matching Algo Process"
+author: "Me"
+date: "2/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data loading
+
+Load libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(zoo)
+library(chron)
+```
+
+Load the data
+```{r}
+trans_cico_fo = read_csv('data_for_matching/trans_cico_to_fo.csv')
+trans_cico_fo_ver2 = read_csv('data_for_matching/trans_cico_to_fo_ver2.csv')
+trans_fo = read_csv('data_for_matching/trans_fo.csv')
+trans_cico = read_csv('data_for_matching/trans_cico.csv')
+head(trans_cico_fo)
+```
+
+
+Fix ver 2
+```{r}
+trans_cico_fo_ver2 = trans_cico_fo_ver2 %>%
+   select(source_geofence = source,
+          source_entry_time = source_first_timestamp,
+          dest_geofence = geofence_name,
+          dest_entry_time = first_timestamp,
+          plateno,
+          everything())
+```
+
+
+segmentized data
+```{r}
+# remove locations without source
+trans_cico_fo = trans_cico_fo_ver2 %>%
+      filter(!is.na(source_geofence))
+
+trans_cico_fo = trans_cico_fo_ver2 %>%
+      arrange(plateno)
+
+# add segment number if the vehicle returned from trip
+trans_cico_fo_segment = trans_cico_fo_ver2 %>%
+      filter(pattern == 1) %>%
+      mutate(trip_segment = 1:nrow(.))
+
+#left join to add the segment to the trans cico FO
+trans_cico_fo_segmentized =  trans_cico_fo_ver2 %>%
+      left_join(trans_cico_fo_segment) %>%
+      mutate(trip_segment = as.character(trip_segment)) %>%
+      mutate(trip_segment = na.locf(.$trip_segment, na.rm = F)) %>%
+      filter(source_geofence != dest_geofence)
+
+# add segments
+trans_cico_fo_segmentized = trans_cico_fo_segmentized %>%
+   mutate(n = 1:nrow(.))
+```
+
+
+Alter trans_cico_segmentized
+- add 8 hours
+- filter for only January
+```{r}
+trans_cico_fo_segmentized_8 = trans_cico_fo_segmentized %>%
+   mutate(source_entry_time = source_entry_time + hours(8),
+          dest_entry_time = dest_entry_time + hours(8))
+
+trans_cico_fo_segmentized_january = trans_cico_fo_segmentized %>%
+   filter(source_entry_time >= as.Date('2021-01-01'))
+```
+
+get same location and plateno,
+if no matching plateno get the closest
+
+```{r}
+final_data = tibble()
+for (i in 1:819){
+  sample = trans_cico_fo_segmentized %>%
+   filter(trip_segment == i)
+
+   matched_data = sample %>%
+         left_join(trans_fo, by = c('source_geofence' = 'pickup_name', 'dest_geofence' = 'dropoff_name')) %>%
+         mutate(same_plateno = vehicle_plate_no == plateno) %>%
+         mutate(diff_pickup = abs(as.duration(source_entry_time - pickup_arrival)),
+                diff_dropoff = abs(as.duration(dest_entry_time -dropoff_arrival))) %>%
+         group_by(source_geofence, dest_geofence) %>%
+         mutate(diff_ranking = rank(diff_pickup, ties.method = 'min')) %>%
+         arrange(diff_ranking)
+   
+   
+   matched_data = matched_data %>%
+      mutate(sum_same_plateno = sum(same_plateno, na.rm = T))
+   
+   #if no matching plateno, get the closest trip number
+   if (all(matched_data$same_plateno == 0, na.rm = T)){
+      matched_data = matched_data %>%
+         filter(diff_ranking == 1 & !is.na(diff_pickup))
+   # if there is matching plateno, get the closest matching plateno
+   } else if (all(matched_data$same_plateno == 0, na.rm = T) == F){
+      matched_data = matched_data %>%
+         filter(diff_ranking == 1 & same_plateno == T & !is.na(diff_pickup))
+   }
+   
+   
+   final_data = final_data %>%
+               rbind(matched_data)
+}
+
+final_data %>%
+   select(-pattern, - consec_pickup)
+```
+
+There are 380 matches with repeating FOs
+
+
+Get closest per trip number
+- Another approach
+- dont FOs after matching but instead after running the algo, find the closest CICO per trip number. 
+- Cons: Fewer matches
+- Pros : possibly lower time difference
+```{r}
+final_data %>%
+   ungroup() %>%
+   filter(!is.na(diff_pickup))
+   arrange(trip_number, diff_pickup) %>%
+      group_by(source_geofence, dest_geofence, trip_number) %>%
+      mutate(pickup_rank = rank(diff_pickup, ties.method = 'min'),
+             dropoff_rank = rank(diff_dropoff, ties.method = 'min')) %>%
+   filter(pickup_rank == 1 & dropoff_rank == 1) %>%
+   arrange(trip_number) %>%
+   ungroup() %>%
+   summarise(mean_diff_pickup = seconds_to_period(mean(diff_pickup)),
+             mean_diff_dropoff = seconds_to_period(mean(diff_dropoff)),
+             median_diff_pickup = seconds_to_period(median(diff_pickup)),
+             median_diff_dropoff = seconds_to_period(median(diff_dropoff)))
+   
+```
+
+
+# Removing matched from the data
+```{r}
+final_data = tibble()
+trans_fo_matching = trans_fo
+for (i in 1:819){
+  sample = trans_cico_fo_segmentized %>%
+   filter(trip_segment == i)
+
+   matched_data = sample %>%
+         left_join(trans_fo_matching, by = c('source_geofence' = 'pickup_name', 'dest_geofence' = 'dropoff_name')) %>%
+         mutate(same_plateno = vehicle_plate_no == plateno) %>%
+         mutate(diff_pickup = abs(as.duration(source_entry_time - pickup_arrival)),
+                diff_dropoff = abs(as.duration(dest_entry_time -dropoff_arrival))) %>%
+         group_by(source_geofence, dest_geofence) %>%
+         mutate(diff_ranking_pickup = rank(diff_pickup, ties.method = 'min'),
+                diff_ranking_dropoff = rank(diff_dropoff, ties.method =  'min')) %>%
+         arrange(diff_ranking_pickup)
+   
+   
+   matched_data = matched_data %>%
+      mutate(sum_same_plateno = sum(same_plateno, na.rm = T))
+   
+   #if no matching plateno, get the closest trip number
+   if (all(matched_data$same_plateno == 0, na.rm = T)){
+      matched_data = matched_data %>%
+         filter(diff_ranking_pickup == 1 & !is.na(diff_pickup))
+   # if there is matching plateno, get the closest matching plateno
+   } else if (all(matched_data$same_plateno == 0, na.rm = T) == F){
+      matched_data = matched_data %>%
+         filter((same_plateno == T) & !is.na(diff_pickup))
+   }
+   
+   
+   if (all(matched_data$same_plateno == T, na.rm = T)){
+      matched_data = matched_data %>%
+         filter(diff_ranking_pickup == min(diff_ranking_pickup),
+                diff_ranking_dropoff == min(diff_ranking_dropoff))
+   } 
+   
+   trans_fo_matching =  trans_fo_matching %>%
+      anti_join(matched_data, by = c('trip_number' = 'trip_number'))
+   
+   final_data = final_data %>%
+               rbind(matched_data)
+}
+
+final_data
+
+
+# final_data %>%
+#    select(-pattern, -consec_pickup) %>%
+#    mutate(source_entry_time = as.character(source_entry_time),
+#           dest_entry_time = as.character(dest_entry_time),
+#           pickup_arrival = as.character(pickup_arrival),
+#           dropoff_arrival = as.character(dropoff_arrival)) %>%
+#    write_csv('transpecial_removematched.csv')
+```
+
+
+
+300 matches if no repeating
+
+
+# Individual matching and removal
+```{r}
+ptm <- proc.time()
+
+final_data = tibble()
+trans_fo_matching = trans_fo
+for (i in 1:1379){
+  sample = trans_cico_fo_segmentized %>%
+   filter(n == 1)
+
+   matched_data = sample %>%
+         left_join(trans_fo_matching, by = c('source_geofence' = 'pickup_name', 'dest_geofence' = 'dropoff_name')) %>%
+         mutate(same_plateno = vehicle_plate_no == plateno) %>%
+         mutate(diff_pickup = abs(as.duration(source_entry_time - pickup_arrival)),
+                diff_dropoff = abs(as.duration(dest_entry_time -dropoff_arrival))) %>%
+         group_by(source_geofence, dest_geofence) %>%
+         mutate(diff_ranking_pickup = rank(diff_pickup, ties.method = 'min'),
+                diff_ranking_dropoff = rank(diff_dropoff, ties.method =  'min'))
+   
+    
+   # matched_data = matched_data %>%
+   #    mutate(sum_same_plateno = sum(same_plateno, na.rm = T))
+   
+   #if no matching plateno, get the closest trip number
+   if (all(matched_data$same_plateno == 0, na.rm = T)){
+      matched_data = matched_data %>%
+         filter(diff_ranking_pickup == 1 & !is.na(diff_pickup))
+   # if there is matching plateno, get the closest matching plateno
+   } else if (all(matched_data$same_plateno == 0, na.rm = T) == F){
+      matched_data = matched_data %>%
+         filter((same_plateno == T) & !is.na(diff_pickup))
+   }
+   
+   # if there are multiple matching plate no. Get the closest
+   # if (nrow(matched_data %>% 
+   #          filter(diff_ranking_pickup == min(diff_ranking_pickup))) == 1){
+   #    matched_data = matched_data %>%
+   #       filter(diff_ranking_pickup == min(diff_ranking_pickup))
+   # } 
+   # else{
+   #    matched_data = matched_data %>%
+   #       filter(diff_ranking_pickup == min(diff_ranking_pickup),
+   #              diff_ranking_dropoff == min(diff_ranking_dropoff))
+   # }
+   
+   
+   # get only the closest
+   matched_data = matched_data %>%
+      filter(diff_ranking_pickup == min(diff_ranking_pickup))
+   
+   # if there's a match. Remove those matched with the current FO
+   if (nrow(matched_data) > 0){
+       trans_fo_matching =  trans_fo_matching %>%
+      anti_join(matched_data, by = c('vehicle_plate_no' = 'vehicle_plate_no', 
+                                     'pickup_arrival' = 'pickup_arrival', 
+                                     'pickup_name' = 'source_geofence',
+                                     'dropoff_arrival' = 'dropoff_arrival',
+                                     'dropoff_name' = 'dest_geofence'))
+   }
+   
+   
+   final_data = final_data %>%
+               rbind(matched_data)
+}
+
+proc.time() - ptm
+final_data
+```
+
+## Initial results with improvement on time
+
+```{r}
+ptm <- proc.time()
+
+datalist = list()
+trans_fo_matching = trans_fo
+for (i in 1:1379){
+  sample = trans_cico_fo_segmentized_january[trans_cico_fo_segmentized_january$n == i,]
+
+   
+   matched_data = left_join(sample, trans_fo_matching, by = c('source_geofence' = 'pickup_name', 'dest_geofence' = 'dropoff_name'))
+   
+   matched_data$same_plateno = matched_data$vehicle_plate_no == matched_data$plateno
+   matched_data$diff_pickup = abs(as.duration(matched_data$source_entry_time - matched_data$pickup_arrival))
+   matched_data$diff_dropoff = abs(as.duration(matched_data$dest_entry_time - matched_data$dropoff_arrival))
+   
+   matched_data = matched_data %>%
+         group_by(source_geofence, dest_geofence) %>%
+         mutate(diff_ranking_pickup = rank(diff_pickup, ties.method = 'min'),
+                diff_ranking_dropoff = rank(diff_dropoff, ties.method =  'min'))
+   
+   if(all(is.na(matched_data$diff_dropoff))){
+      next
+   }
+   
+   # matched_data = matched_data %>%
+   #    mutate(sum_same_plateno = sum(same_plateno, na.rm = T))
+   
+   #if no matching plateno, get the closest trip number
+   if (all(matched_data$same_plateno == 0, na.rm = T)){
+      matched_data = matched_data[matched_data$diff_ranking_pickup == 1 & !is.na(matched_data$diff_pickup),]
+      
+   # if there is matching plateno, get the closest matching plateno
+   } else if (all(matched_data$same_plateno == 0, na.rm = T) == F){
+      matched_data = matched_data[matched_data$same_plateno ==T &!is.na(matched_data$same_plateno),]
+   }
+   
+   # if there are multiple matching plate no. Get the closest
+   # if (nrow(matched_data %>%
+   #          filter(diff_ranking_pickup == min(diff_ranking_pickup))) == 1){
+   #    matched_data = matched_data %>%
+   #       filter(diff_ranking_pickup == min(diff_ranking_pickup))
+   # }
+   # else{
+   #    matched_data = matched_data %>%
+   #       filter(diff_ranking_pickup == min(diff_ranking_pickup),
+   #              diff_ranking_dropoff == min(diff_ranking_dropoff))
+   # }
+   # 
+   
+   # get only the closest
+   
+   matched_data = matched_data[matched_data$diff_ranking_pickup == min(matched_data$diff_ranking_pickup),]
+   
+   # if there's a match. Remove those matched with the current FO
+   if (nrow(matched_data) > 0){
+       trans_fo_matching =  trans_fo_matching %>%
+      anti_join(matched_data, by = c('vehicle_plate_no' = 'vehicle_plate_no', 
+                                     'pickup_arrival' = 'pickup_arrival', 
+                                     'pickup_name' = 'source_geofence',
+                                     'dropoff_arrival' = 'dropoff_arrival',
+                                     'dropoff_name' = 'dest_geofence'))
+   }
+   
+   
+  datalist[[i]] = matched_data
+}
+
+big_data = do.call(bind_rows, datalist)
+proc.time() - ptm
+```
+
+
+
+
+
+
+
+
+

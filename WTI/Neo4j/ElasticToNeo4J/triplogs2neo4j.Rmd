@@ -1,0 +1,225 @@
+---
+title: "triplogs sequence"
+author: "Me"
+date: "1/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+library(elastic)
+library(elasticsearchr)
+library(jsonlite)
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(data.table)
+library(lubridate)
+library(getPass)
+
+conn = connect(
+host = "tmsuite-elasticsearch.trackme.com.ph",
+port = 443,
+path = NULL,
+transport_schema = "https",
+user = 'jfcastaneda',
+pwd =  getPass("Enter Password:"),
+headers = NULL,
+cainfo = NULL,
+force = FALSE,
+errors = "simple",
+warn = TRUE
+)
+```
+
+Get data
+
+```{r}
+
+q1 = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"bool\": {\"filter\": [{\"bool\": {\"should\": [{\"match_phrase\": {\"group_names\": \"Nestle\"}}], \"minimum_should_match\": 1}}, {\"multi_match\": {\"type\": \"best_fields\", \"query\": \"entered left\", \"lenient\": \"true\"}}]}}, {\"range\": {\"datestamp\": {\"gte\": \"2020-11-30T16:00:00.000Z\", \"lte\": \"2020-12-09T15:59:59.000Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+q2 = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"bool\": {\"filter\": [{\"bool\": {\"should\": [{\"match_phrase\": {\"group_names\": \"Nestle\"}}], \"minimum_should_match\": 1}}, {\"multi_match\": {\"type\": \"best_fields\", \"query\": \"entered left\", \"lenient\": \"true\"}}]}}, {\"range\": {\"datestamp\": {\"gte\": \"2020-12-09T16:00:00.000Z\", \"lte\": \"2020-12-14T15:59:59.000Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+q3 = "{\"size\": 10000, \"query\": {\"bool\": {\"must\": [], \"filter\": [{\"bool\": {\"filter\": [{\"bool\": {\"should\": [{\"match_phrase\": {\"group_names\": \"Nestle\"}}], \"minimum_should_match\": 1}}, {\"multi_match\": {\"type\": \"best_fields\", \"query\": \"entered left\", \"lenient\": \"true\"}}]}}, {\"range\": {\"datestamp\": {\"gte\": \"2020-12-14T16:00:00.000Z\", \"lte\": \"2020-12-17T15:59:59.000Z\", \"format\": \"strict_date_optional_time\"}}}], \"should\": [], \"must_not\": []}}}"
+
+
+```
+
+Combine data
+
+```{r}
+
+d1 = Search(conn, index = 'tmsuite_triplogs_20*', body = q1, , raw = TRUE)
+d1 = fromJSON(d1)
+d1 = as.data.table(d1$hits$hits$`_source`)
+
+
+d2 = Search(conn, index = 'tmsuite_triplogs_20*', body = q2, , raw = TRUE)
+d2 = fromJSON(d2)
+d2 = as.data.table(d2$hits$hits$`_source`)
+
+d3 = Search(conn, index = 'tmsuite_triplogs_20*', body = q3, , raw = TRUE)
+d3 = fromJSON(d3)
+d3 = as.data.table(d3$hits$hits$`_source`)
+
+data = rbind(d1, d2, d3)
+```
+
+```{r}
+
+unnested = data %>%
+      unnest(group_names) %>%
+      group_by(gps_received, creator, device_id, plateno) %>%
+      mutate(group_names = paste(group_names, collapse = ',')) %>%
+      distinct() %>%
+      unnest(group_ids) %>%
+      group_by(gps_received, creator, device_id, plateno) %>%
+      mutate(group_ids = paste(group_ids, collapse = ',')) %>%
+      distinct()
+
+unnested = unnested %>%
+      unnest(alert_ids) %>%
+      unnest(alert_msgs) %>%
+      unnest(alert_codes, keep_empty = TRUE)
+
+unnested = unnested %>%
+      mutate(gps_received = ymd_hms(gps_received),
+             created = ymd_hms(created),
+             datestamp = ymd_hms(datestamp),
+             modified = ymd_hms(modified))
+
+unnested = unnested %>%
+      as_tibble() %>%
+      select(-creator)
+
+#separate locations
+triplogs_dhl = unnested %>%
+      separate(alert_msgs, into = c('alert','location'), sep = ' ', extra = 'merge', fill = 'right') %>%
+      mutate(alert = ifelse(alert == 'Left' | alert == 'Entered', alert, paste(alert, location))) %>%
+      mutate(location = ifelse(alert == 'Left' | alert == 'Entered', location, NA))
+
+
+#filter locations
+triplogs_dhl = triplogs_dhl %>%
+      filter(alert == 'Left' | alert == 'Entered')
+```
+
+```{r}
+#select needed cols
+triplogs_dhl_filtered = triplogs_dhl %>%
+      select(gps_received, datestamp,modified,  plateno,alert, location,  group_names, group_ids)
+
+#remove source and destination
+triplogs_dhl_filtered = triplogs_dhl_filtered %>%
+      mutate(location = str_remove(location, ' - Destination')) %>%
+      mutate(location = str_remove(location, ' - Source')) %>%
+        select(-modified, -gps_received) %>%
+      distinct()
+
+#add ranking
+triplogs_dhl_filtered = triplogs_dhl_filtered %>%
+      filter(alert == 'Entered') %>%
+      arrange(plateno, datestamp) %>%
+      group_by(plateno) %>%
+      mutate(series = rank(datestamp, ties.method = 'first'))
+
+triplogs_dhl_filtered = triplogs_dhl_filtered %>%
+  distinct(datestamp, location, .keep_all = TRUE)
+```
+
+```{r}
+triplogs_dhl_filtered
+```
+
+
+```{r}
+#add new locations and other locations and separate timestamp
+triplogs_dhl_filtered = triplogs_dhl_filtered %>%
+      group_by(plateno) %>%
+      mutate(next_location = lead(location)) %>%
+      select(plateno, datestamp,series, location, next_location, -alert, everything()) %>%
+      mutate(loc1_datestamp = datestamp, 
+             loc2_datestamp = lead(datestamp)) %>%
+      select(plateno, loc1_datestamp, loc2_datestamp, location, next_location, everything()) %>%
+      filter(!is.na(next_location))
+
+#Select only those needed columns
+triplogs_dhl_filtered = triplogs_dhl_filtered %>%
+      select(plateno, loc1_datestamp, loc2_datestamp, location, next_location, group_names)
+
+#Convert date times to characters
+final_data = triplogs_dhl_filtered %>%
+      mutate(loc1_datestamp = as.character(loc1_datestamp),
+             loc2_datestamp = as.character(loc2_datestamp))
+
+final_data
+```
+
+```{r}
+final_data = final_data %>%
+   mutate(group_names = str_replace_all(group_names, ', Inc.', ' Inc.')) %>%
+   separate_rows(group_names, sep = ',') %>%
+      mutate(group_names = paste0('"',group_names,'"')) %>%
+      group_by(plateno, loc1_datestamp, loc2_datestamp, location, next_location) %>%
+      mutate(group_names = paste(group_names, collapse = ',')) %>%
+      distinct()
+ 
+final_data= final_data %>%
+  mutate(trip_number = seq(1:nrow(.)))
+
+final_data %>%
+  write_csv('triplogsneo4j.csv')
+```
+
+
+
+##########################################
+
+
+
+Further data manipulation
+```{r}
+library(tidyverse)
+
+data = read_csv('triplogsneo4j.csv')
+
+data = data %>%
+  mutate(group_names = str_replace_all(group_names, ', Inc.', ' Inc.'))
+
+data = data %>%
+      separate_rows(group_names, sep = ',') %>%
+      mutate(group_names = paste0('"',group_names,'"')) %>%
+      group_by(plateno, loc1_datestamp, loc2_datestamp, location, next_location) %>%
+      mutate(group_names = paste(group_names, collapse = ',')) %>%
+      distinct()
+
+data = data %>%
+      mutate(loc1_datestamp = as.character(loc1_datestamp),
+             loc2_datestamp = as.character(loc2_datestamp))
+
+data %>%
+  write_csv('triplogsneo4j2.csv')
+```
+
+Explore
+```{r}
+data %>%
+  filter(plateno == 'DAM1599')
+```
+
+
+
+
+##Possible error/improvements
+- A vehicle entered the different location at the same time
+- problem with locations with source/destination. Same entry on PH Batino SOurce and PH Batino Grocery
+- problem with cross dock GMA and cross dock Luzon, Same entry time.
+- there are some places without left/enter pairs
+- need for unique identifier on trips
+- cannot identify the total amount of time on certain geofence
+
+

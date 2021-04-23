@@ -1,0 +1,15 @@
+Fixed
+
+Activity
+- NOne
+
+Zoning
+- filtered out outliers
+- fixed geofence category
+
+Travel Details
+- fixed travel category
+- 
+
+Rover status
+- created active and inactive column based on last report date.
