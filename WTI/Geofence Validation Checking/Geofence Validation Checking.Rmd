@@ -1,0 +1,61 @@
+---
+title: "Geofence Validation"
+author: "Me"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(RPostgreSQL)
+library(getPass)
+library(lubridate)
+library(data.table)
+```
+
+
+```{r}
+query1 = 'SELECT name FROM geofence_edited'
+```
+
+```{r}
+pgdrv <- dbDriver(drvName = "PostgreSQL")
+postgrescon <-DBI::dbConnect(pgdrv,
+                    dbname="WTI",
+                    host="localhost", port=5432,
+                    user = 'postgres',
+                    password = getPass('password'))
+
+geofence_names = dbGetQuery(postgrescon, query1)
+```
+
+```{r}
+geofence_names %>%
+      arrange(name)
+```
+
+```{r}
+geofence_verification = read_csv('nestle_geofence_verification_updated.csv')
+```
+
+```{r}
+geofence_names = geofence_names %>%
+      left_join(geofence_verification, by = c('name' = 'dropoff')) %>%
+      distinct(name, verified_via_triplog) %>%
+      filter(complete.cases(.))
+```
+```{r}
+geofence_names %>%
+      count(verified_via_triplog)
+```
+
+
+```{r}
+geofence_names %>%
+      write_csv('to_validate_geofences.csv')
+```
+

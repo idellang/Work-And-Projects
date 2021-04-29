@@ -19,18 +19,12 @@ library(data.table)
 
 
 ```{r}
-data = read_csv('Nestle_JM0535_April1-April10-Formatted.csv')
+data = read_csv('Nestle_March_Kodigo_GPS-Formatted.csv')
 data
 ```
 
 
-```{r}
-data = read_csv('input_data/EHD_Logistics-GPS-Dec-to-Jan-Formatted.csv')
-```
 
-```{r}
-data
-```
 
 ```{r}
 data %>%
@@ -84,36 +78,6 @@ formatted_data %>%
                 max(datestamp))
 ```
 
-```{r}
-
-get_entered = function(data){
-      
-      data = data %>%
-      mutate(alert_msgs = str_replace_all(alert_msgs,"\\[|\\]|\\'",''))
-
-      pattern = '(Entered .*)'
-
-      entered_data = data %>%
-            mutate(extracted = str_extract_all(alert_msgs, pattern)) %>%
-            unnest(extracted) %>%
-            separate_rows(alert_msgs, sep =',')
-
-
-      entered_data = entered_data %>%
-            filter(str_detect(alert_msgs,'Entered')) %>%
-            mutate(location = str_replace(alert_msgs,'Entered ',''))
-      
-      entered_data %>%
-            arrange(datestamp) %>%
-            mutate(datestamp = as.character(datestamp))
-      
-      entered_data = entered_data %>%
-            select(datestamp, plateno, latitude, longitude, location)
-      
-      return(entered_data)
-}
-entered_data = get_entered(formatted_data)
-```
 
 ```{r}
 formatted_data
@@ -143,30 +107,6 @@ gps_to_postgis(formatted_data, 'staging_table', userpass = 'postgres', password 
 ```
 
 
-## Transfer GPS data to postgis
-Transfer GPS data to postgis for spatial analysis
-
-```{r}
-gps_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass, password){
-      pgdrv <- dbDriver(drvName = "PostgreSQL")
-      
-      postgrescon <-DBI::dbConnect(pgdrv,
-                    dbname="WTI",
-                    host="localhost", port=5432,
-                    user = userpass,
-                    password = password)
-      
-      data = data %>%
-            select(-alert_msgs)
-      
-      data = data %>%
-            mutate(datestamp = as.character(datestamp))
-      
-      dbWriteTable(postgrescon, postgis_table, data, row.names=FALSE, append=TRUE)
-}
-
-gps_to_postgis(formatted_data, 'staging_table', userpass = 'postgres', password = getPass('Password:'))
-```
 
 
 # Get points inside geofence.
@@ -178,9 +118,9 @@ query =  "SELECT
 	t.plateno,
 	g.name AS geofence_name
 FROM 
-	gps_data AS t
+	kodigo_gps_1 AS t
 JOIN
-	nestle_geofences_march23 AS g
+	nestle_geofences_april29 AS g
 ON 
       ST_INTERSECTS(g.geom, t.geom);"
 
@@ -221,7 +161,10 @@ vehicle_location_group = points_inside_geofence %>%
              time_end = max(datestamp),
              num_points = n()) %>%
       mutate(duration = as.duration(time_end - time_start)) 
+
+
 ```
+
 
 
 
@@ -350,27 +293,46 @@ cico_data = cico_data %>%
       select(-time_next)
 ```
 
+
+
+
 ```{r}
 cico_data = cico_data %>%
       rename(datestamp_entry = first_timestamp,
              datestamp_left = last_timestamp)
+
+cico_data = cico_data %>%
+      ungroup() %>%
+      mutate(cico_id = seq(1, nrow(cico_data))) %>%
+      select(cico_id, everything())
+
+cico_data = cico_data %>%
+      group_by(plateno) %>%
+      arrange(plateno, datestamp_entry) %>%
+      mutate(next_datestamp_entry = lead(datestamp_entry)) %>%
+      mutate(time_diff = as.duration(ymd_hms(next_datestamp_entry) - ymd_hms(datestamp_entry))) %>%
+      mutate(possible_overlap = ifelse(abs(time_diff) < 7200, 1,0)) %>%
+      select(-next_datestamp_entry, -time_diff)
+
 cico_data %>%
-      write_csv('JM0535_cico.csv')
+      arrange(cico_id) %>%
+      write_csv('cico_march_kodigo_1.csv')
+```
+
+```{r}
+cico_data %>%
+      filter(plateno == 'CXK260')
 ```
 
 
 
 
 ```{r}
-cico_data %>%
-      mutate(first_timestamp = as.character(first_timestamp),
-             last_timestamp = as.character(last_timestamp)) %>%
-      select(-time_next) %>%
-      write_csv('ehd_cico.csv')
-```
-
-```{r}
-cico_data
+cico_data = cico_data %>%
+      ungroup() %>%
+      mutate(geofence_name = str_replace_all(geofence_name,'Destination','Source')) %>%
+      mutate(possible_overlap = ifelse(is.na(possible_overlap), 0 , possible_overlap)) %>%
+      arrange(cico_id)
 ```
 
 
