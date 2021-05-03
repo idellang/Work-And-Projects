@@ -16,68 +16,12 @@ library(tidyverse)
 library(lubridate)
 ```
 
-```{r}
-data = read_csv('Geofence Library/library.csv')
-data = data %>%
-      select(fid, name, gis_status)
-```
-
 
 ```{r}
-pickup = read_csv('Geofence Library/HAM_Pickup.csv')
-```
-
-
-```{r}
-data = data %>%
-      left_join(pickup, by = c('name' = 'pickup_name')) %>%
-      distinct() %>%
-      rename(with_pickup = with_actual)
+data = read_csv('Sample/DataStudio_EvenCapture_April27-May3.csv')
 ```
 
 ```{r}
-dropoff = read_csv('Geofence Library/HAM_Dropoff.csv')
-```
-
-```{r}
-data = data %>%
-      left_join(dropoff, by = c('name' = 'dropoff_name')) %>%
-      distinct() %>%
-      rename(with_dropoff = with_actual)
-```
-
-```{r}
-pickup %>%
-      filter(with_actual == 1) %>%
-      distinct() %>%
-      arrange(pickup_name)
-```
-
-```{r}
-dropoff_with_actual = dropoff %>%
-      filter(with_actual == 1) %>%
-      distinct()
-```
-
-
-```{r}
-data = data %>%
-      mutate(with_pickup = ifelse(is.na(with_pickup), 0, with_pickup)) %>%
-      mutate(with_dropoff = ifelse(is.na(with_dropoff), 0, with_dropoff)) %>%
-      mutate(with_cico = (with_pickup | with_dropoff)) %>%
-      mutate(with_cico1 = ifelse(with_cico == T, 1, 0))
-```
-
-```{r} 
-data %>%
-      write_csv('geofence_library_with_cico.csv')
-```
-
-```{r}
-data %>%
-      distinct(fid, name, gis_status, with_cico1) %>%
-      group_by(fid, name) %>%
-      summarise(cico = sum(with_cico1)) %>%
-      ungroup()
+data
 ```
 
