@@ -1,0 +1,618 @@
+---
+title: "Bank EDA and Modeling"
+author: "Me"
+date: "4/20/2021"
+output: html_document
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE)
+```
+
+## I. Load libraries and the data
+
+```{r, warning=FALSE, error=FALSE, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+library(caret)
+library(funModeling)
+library(doParallel)
+library(corrplot)
+library(e1071)
+library(scales)
+library(inspectdf)
+library(beeswarm)
+library(knitr)
+library(pROC)
+library(caret)
+library(broom)
+```
+
+
+```{r, warning=FALSE}
+data = read_delim('bank.csv', delim = ';')
+data %>%
+        head() %>%
+        kable()
+```
+
+
+
+## II. Exploratory data Analysis
+
+
+### Check data type and content
+
+```{r}
+df_status(data)
+```
+
+There are no missing values
+
+Check the response variable
+```{r}
+table(data$y)/nrow(data)
+```
+
+There are fewer yes on term deposit. Sampling method is needed on splitting train and test
+
+
+### Check numeric data
+
+```{r}
+plot1 = inspect_num(data) %>%
+        show_plot()+
+        theme_minimal()
+ggplotly(plot1)
+```
+
+Most numeric columns are skewed. Based on the attribute information, the columns duration, campaign, pdays, and previous are based on the customer contacts. Probably better to leave this columns as is. 
+
+Try to transform balance column since this is probably log-normally distributed. There will be removed observations because of negative and 0 values.
+
+```{r, warning=FALSE, error=FALSE}
+plot2 = data %>%
+        ggplot(aes(balance))+
+        geom_histogram(fill = 'steelblue')+
+        scale_x_log10(label = comma)+
+        labs(y = '', x = 'Log balance', title = 'Log distribution of balance')+
+        theme_minimal()
+
+ggplotly(plot2)
+```
+
+
+Check if there are still outliers after log transformation
+
+```{r}
+outliers_balance = boxplot(log(data$balance), plot = FALSE)$out
+
+data %>%
+        filter(log(balance) %in% outliers_balance, balance > 100) %>%
+        kable()
+```
+
+```{r}
+quantile(data$balance)
+```
+
+It would be better to remove this entry since this might affect the model
+
+
+
+
+
+
+```{r}
+corr = data %>%
+        select_if(is.numeric) %>%
+        cor()
+
+corrplot(corr, method = 'number')
+```
+
+The fields previous and pdays are highly correlated because both are related to campaign contacts. Values on both of these fields are also dependent.
+
+
+
+
+### Check categorical data
+
+
+Check frequency of categorical data
+```{r}
+inspect_cat(data) %>%
+        show_plot()
+```
+
+
+
+Plot first three demographic data related to bank client
+```{r}
+plot3 = data %>%
+        ggplot(aes(x = job, fill =  education))+
+        geom_bar(position =  'fill')+
+        coord_flip()+
+        facet_grid(~marital)+
+        labs(y = 'proportions', x= '', title = 'Job by marital status and education')+
+        scale_y_continuous(breaks = seq(0, 1, .2), 
+                     label = percent)+
+        scale_fill_brewer(palette = 'GnBu')+
+        theme_minimal()+
+        theme(legend.position = 'bottom')
+
+ggplotly(plot3)
+```
+
+Some insights on this graph
+
+- There is no divorced student in our dataset. All divorced with unknown job have tertiary education. Entrepreneur and retired have diversed education and marital status. 
+
+- We can see here the distribution of education and marital status per job. Most management jobs have tertiary level of education whereas the services and admin are dominantly secondary education regardless of your marital status.
+
+
+
+
+
+Plot the other three bank client data, housing loan, personal loan, and default
+
+```{r}
+plot4 = data %>%
+        ggplot(aes(default, fill = loan))+
+        geom_bar(position = 'fill', alpha = .7)+
+        scale_y_continuous(breaks = seq(0, 1, .2), 
+                     label = percent) +
+        scale_fill_manual(values = c('yes' = 'tomato', 'no' = 'gray', guide = F))+
+        labs(x=  'Credit card defaulted', fill = 'Personal Loan',
+             title = 'Percentage of individuals with personal loan by credit card default')+
+        theme(legend.position = 'top')+
+        theme_minimal()
+
+plot4
+```
+```{r}
+plot5 = data %>%
+        ggplot(aes(default, fill = housing))+
+        geom_bar(position = 'fill', alpha = .7)+
+        scale_y_continuous(breaks = seq(0, 1, .2), 
+                     label = percent) +
+        scale_fill_manual(values = c('yes' = 'tomato', 'no' = 'gray', guide = F))+
+        labs(x=  'Credit card has default', fill = 'Housing loan',
+             title = 'Percentage of individuals with housing loan by credit card default')+
+        theme_minimal()
+
+plot5
+```
+
+Unlike the first graph, the proportion of individuals with a housing loan is the same whether they have a default credit. This is probably because housing loan is normally taken by anyone. The variable personal loan would be a better predictor whether a person will default compared to housing loan field.
+
+
+### Possible questions the bank might be interested in
+
+
+
+#### 1. Is the previous marketing campaign a good indicator whether a client will get a term deposit?
+
+```{r}
+plot6 = data %>%
+        group_by(poutcome, y) %>%
+        count() %>%
+        group_by(y) %>%
+        mutate(percentage = n/ sum(n)) %>%
+        ggplot(aes(reorder(poutcome, percentage), percentage, fill = y))+
+        geom_col(position = 'dodge', alpha = .7)+
+        scale_fill_manual(values = c('yes' = 'tomato', 'no' = 'gray', guide = F))+
+        labs(x = 'Previous campaign outcome', y = 'Percentage', fill = 'W/ term deposit',
+             title = 'Outcome of previous campaign and term deposit')+
+        theme_minimal()+
+        coord_flip()
+
+plot6
+```
+
+
+
+
+#### 2. What is the balance distribution of clients with and without term deposit?
+
+```{r, warning=FALSE, error=FALSE}
+plot8 = data %>%
+        ggplot(aes(balance,  fill = y, color = y))+
+        geom_density(alpha = .3)+
+        scale_x_log10(labels = comma)+
+        scale_fill_manual(values = c('yes' = 'tomato', 'no' = 'gray'))+
+        scale_color_manual(values = c('yes' = 'tomato', 'no' = 'gray'), guide = F)+
+        labs(title = 'Balance distribution by obtained term deposit', x = 'Log balance', fill = 'W/ term deposit')+
+        theme_minimal()
+
+plot8
+```
+
+The peak of clients with term deposit is slightly to the right implying those who get term deposit have higher balance.
+
+
+
+#### 3. What jobs are more likely to get a personal loan?
+
+```{r}
+plot9=  data %>%
+        group_by(job, loan) %>%
+        count() %>%
+        group_by(loan) %>%
+        mutate(percentage = n/ sum(n)) %>%
+        mutate(highlight = ifelse((job %in% c('blue-collar','admin.','services','entrepreneur')),'yes','no')) %>%
+        ggplot(aes(reorder(job, percentage), percentage, fill = loan))+
+        geom_col(position = 'dodge', aes(alpha = highlight))+
+        scale_alpha_manual(values = c('yes' = 1, 'no' = .4), guide = F)+
+        scale_fill_manual(values = c('yes' = 'tomato', 'no' = 'gray'))+
+        labs(x = '', y = 'Percentage', fill = 'Has loan',
+             title = 'Percentage of clients with personal loan by job')+
+        theme(legend.position = 'none')+
+        theme_minimal()+
+        coord_flip()
+        
+plot9
+```
+
+Blue collar job, admin, services, and entrepreneur jobs are more likely to get a personal loan.
+
+
+
+#### 4. How does a client's education affect their balance?
+
+Note: Observations with balance less than 5000 only
+```{r}
+plot10 = data %>%
+        filter(balance < 5000) %>%
+        group_by(education) %>%
+        mutate(median_balance = median(balance)) %>%
+        ggplot(aes(balance))+
+        geom_histogram(binwidth = 250, fill = 'steelblue')+
+        geom_vline(aes(xintercept = median_balance), color = 'black', linetype = 'dashed')+
+        theme_minimal()+
+        facet_grid(education ~ .)+
+        labs(title = 'Distribution of balance by education', y = '', x = 'balance', caption = 'Black dashed line is median')
+
+ggplotly(plot10)
+```
+
+Almost same shape (right tailed) with tertiary level of education having the highest median and max. Primary and secondary levels of education also have higher occurrences of negative balance
+
+
+
+### 5. Is there a relationship on the client's age and balance?
+
+Note: Balance > 0. Removed around 700 observations
+```{r}
+plot11 = data %>%
+        filter(balance > 0) %>%
+        ggplot(aes(age, balance))+
+        geom_point(alpha = .7, aes(color = y))+
+        scale_y_log10(label = comma)+
+        geom_smooth(color = 'black', size = 1.2, alpha = .8)+
+        labs(x = 'age', y = 'Log balance', title = 'Age vs Log balance', color = 'Term deposit')+
+        scale_color_manual(values = c('yes' = 'tomato', 'no' = 'gray', guide = F))+
+        theme_minimal()
+
+ggplotly(plot11)
+```
+
+There is a slightly increasing trend which is more noticeable on higher age groups. Also most on the bottom points did not avail term deposit.
+
+
+
+#### 6. Does the contact duration affect whether the client will get a term deposit?
+
+```{r}
+plot12 = data %>%
+        ggplot(aes(x = as.factor(y), y = duration, fill = y))+
+        geom_violin(width = 1.4, alpha = .7)+
+        stat_summary(fun = median, geom = 'point', shape = 22 , size = 2)+
+        scale_fill_manual(values = c('yes' = 'tomato', 'no' = 'gray'))+
+        labs(x = 'W/ term deposit', y=  'contact duration', title = 'Contact duration distribution by term deposit',
+             caption = 'Violin plot with median (square)')+
+        theme_minimal()+
+        theme(legend.position = 'none')
+       
+ggplotly(plot12)
+```
+
+From the data, those who get a term deposit has higher contact duration.
+
+
+
+## III Modeling
+
+### Change data type
+
+Change character into factors
+```{r}
+data = data %>%
+  mutate_if(is.character, as.factor)
+
+glimpse(data)
+```
+
+
+
+### Remove/Add/ Change data
+
+Identify variables with near zero variance
+```{r}
+nz = nearZeroVar(data)
+colnames(data[,nz])
+```
+
+We can remove variables default and pdays since they don't have strong predicting powers. Also pdays is highly correlated with previous. 
+
+Remove these columns and remove the outlier
+```{r}
+data = data %>%
+  filter(!balance == max(balance))
+
+data = data[,-nz]
+```
+
+
+
+
+### Split train and test set
+
+80% training and 20% test. Split the sample on response variable y so that test and train set will have the same proportion of y
+```{r}
+in_train  = createDataPartition(data$y, p = .8, list = F)
+train_data = data[in_train,]
+test_data = data[-in_train,]
+```
+
+Create train with down sample and upsample to balance response variable
+
+```{r}
+#834 rows
+train_data_down = downSample(x = train_data %>%
+                        select(-y),
+                   y = train_data$y,
+                   yname = 'y')
+
+#6400 rows
+train_data_up = upSample(x = train_data %>%
+                        select(-y),
+                   y = train_data$y,
+                   yname = 'y')
+
+table(train_data_down$y)/nrow(train_data_down)
+```
+
+
+
+
+### Model Building
+
+
+#### Model setup
+
+Set up train control for resampling. 
+
+- Kfold cross validation
+- 10 folds
+- Compute for class probability
+- Multiclass summary function to include AUC aside from accuracy, sensitivity, and specificity in resampling computation.
+
+```{r}
+train_control = trainControl(method = 'cv', number = 10, classProbs =T, summaryFunction = multiClassSummary)
+```
+
+Setup parallel computing
+```{r}
+library(doParallel)
+cores = detectCores()
+cl = makeCluster(cores[1]-1)
+#Register cluster
+registerDoParallel(cl)
+```
+
+
+
+#### Logistic regression model
+
+
+```{r}
+set.seed(100)
+glm_model = train(y ~., data = train_data_down, method = 'glm', family = 'binomial', trControl = train_control)
+glm_model
+```
+Predict using glm model
+```{r}
+glm_preds = predict(glm_model, test_data)
+confusionMatrix(glm_preds, test_data$y, positive = 'yes')
+```
+
+This model has high accuracy but low positive predictive value. There were a lot of predicted yes as compared to actual yes. In real life this would incur additional cost if we predict a client to get a term deposit even though the client would not. But if there's a budget, this might be acceptable
+
+
+
+Train using the same model but with the upsampled train data
+
+```{r}
+set.seed(100)
+glm_model_up = train(y ~., data = train_data_up, method = 'glm', family = 'binomial', trControl = train_control)
+glm_model_up
+
+glm_model_up_pred = predict(glm_model_up, test_data)
+confusionMatrix(glm_model_up_pred, test_data$y, positive = 'yes')
+```
+
+It seems that the model with upsampled sample is slightly more accurate but still have low positive predictive value.
+
+
+One advantage of using simpler model such as logistic regression is that you can check the estimate and significance of each variable
+
+```{r}
+summary(glm_model_up)
+```
+
+Sample significant variables
+
+* poutcomesuccess : positive
+* duration : positive
+* unknown contact : negative
+* loanyes : negative
+
+
+
+#### Random forest
+
+Try a more complex model with tuning parameters to increase model accuracy.
+
+```{r}
+set.seed(100)
+
+#set up tuning grid parameter
+# 2,3,4 different mtry
+tunegrid = expand.grid(.mtry=c(2:8))
+
+rf_model = train(y ~., data = train_data_up, method = 'rf', tuneGrid = tunegrid, trControl = train_control)
+rf_model
+
+rf_model_pred = predict(rf_model, test_data)
+confusionMatrix(rf_model_pred, test_data$y, positive = 'yes')
+```
+
+
+This model has higher accuracy but lower sensitivity in prediction. The model also overfitted in predicting yes. Probably because training data is balanced whereas test data is not.
+This model, however, has higher specificity and lower logloss and accurately predicts those that are TRUE NEGATIVE better.
+
+
+
+Use random forest on downsampled data.
+
+```{r}
+set.seed(100)
+
+#set up tuning grid parameter
+# 2,3,4 different mtry
+tunegrid = expand.grid(.mtry=c(2:8))
+
+rf_model_down = train(y ~., data = train_data_down, method = 'rf', tuneGrid = tunegrid, trControl = train_control)
+rf_model_down
+
+rf_model_pred_down = predict(rf_model_down, test_data)
+confusionMatrix(rf_model_pred_down, test_data$y, positive = 'yes')
+```
+
+
+Now this model has higher sensitivity but overall lower accuracy. Random forest model is less robust compared to GLM and is more affected by the sampling method on the training data.
+
+
+#### Support Vector Machine
+
+```{r}
+#model setup
+set.seed(100)
+svm_grid = expand.grid(C = seq(0, 2, length = 10))
+
+# fit model
+svm_model = train(y ~., data = train_data_up, method = 'svmLinear', tuneGrid = svm_grid, trControl = train_control)
+svm_model
+
+svm_model_pred = predict(svm_model, test_data)
+confusionMatrix(svm_model_pred, test_data$y, positive = 'yes')
+```
+
+
+
+```{r}
+#model setup
+set.seed(100)
+svm_grid = expand.grid(C = seq(0, 2, length = 10))
+
+# fit model
+svm_model_down = train(y ~., data = train_data_down, method = 'svmLinear', tuneGrid = svm_grid, trControl = train_control)
+svm_model_down
+
+svm_model_pred_down = predict(svm_model_down, test_data)
+confusionMatrix(svm_model_pred_down, test_data$y, positive = 'yes')
+```
+
+SVM with downsampled training data has similar statistics with SVM trained on upsampled training data. The results of SVM also have very similar metrics with the results from GLM.
+
+
+### Compare models
+
+
+
+#### Comparing model metrics
+
+Models from upsampled data
+```{r}
+models_upsampled = list(glm_up = glm_model_up, rf_up = rf_model, svm_up = svm_model)
+resampled_upsampled =resamples(models_upsampled)
+bwplot(resampled_upsampled, metric = c('Sensitivity','Specificity','Accuracy','AUC'), main = 'Resampled metrics on upsampled training data')
+```
+
+From the resampling results of different models, it is evident that the random forest model has the highest accuracy metrics. Also the confidence intervals don't overlap. However, we know that based on the confusion matrix with test data, the random forest model overfitted and has low sensitivity and wasn't able to predict the response variable "YES" well.
+
+
+Models from downsampled data
+```{r}
+models_downsampled = list(glm_down = glm_model, rf_down = rf_model_down, svm_down = svm_model_down)
+resampled_downsampled =resamples(models_downsampled)
+bwplot(resampled_downsampled, metric = c('Accuracy','AUC','Sensitivity','Specificity'), main = 'Resampled metrics on downsampled training data')
+```
+
+For downsampled training data, the models have similar metric values with overlapping confidence interval.
+
+
+#### Compare SVM and GLM
+
+```{r}
+compare_models(glm_model, svm_model_down)
+```
+
+
+### Best model
+
+There is no significant difference on the resampling results from GLM and SVM models. Therefore, it would be better to pick GLM since it is more explainable and scalable than SVM.
+
+When the resampling results from Random Forest model were compared with the resampling results from the other two models, it is evident that RF has higher accuracy metrics. The problem with RF lies more on the data it was trained on. Even though it has high resampled accuracy, it wasn't able to correctly predict TRUE POSITIVES on test set.
+
+One would choose the GLM over RF because of simplicity and accuracy. Moreover, the test predictions are acceptable even though it predicted more "YES". The downside of the GLM model would be the cost of marketing campaign for FALSE POSITIVE clients.
+
+
+
+
+
+### Identify Important variables 
+
+```{r}
+plot(varImp(glm_model_up), top = 10, main = 'Top 10 important variables in the GLM')
+```
+
+
+```{r}
+plot(varImp(rf_model), top = 10, main = 'Top 10 important variables in the Random Forest Model')
+```
+
+
+
+In both models, both the duration and poutcome are included in the top 10 important variables.
+
+
+## IV Things to do/improve
+
+- More data 
+- Do feature engineering on campaign variables
+- Expand tuning parameters
+- Try other models (models that can take into account class imbalance)
+- Try nonlinear models? Though probably it wont affect much.
+- Try other sampling methods to balance response variable.
+- Try other methods to account for class imbalance (weighted models, different probablity cutoff, etc)
+- Look into other metrics aside from accuracy.
+- Select only important variables and fit another model
+
+
+
+
+

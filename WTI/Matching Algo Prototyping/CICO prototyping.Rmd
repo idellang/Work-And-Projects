@@ -25,6 +25,12 @@ data
 
 
 
+```{r}
+data %>%
+      filter(plateno == 'KAD4602') %>%
+      arrange(created) %>%
+      filter(created >= '2021-03-14 10:39:00')
+```
 
 ```{r}
 data %>%
@@ -145,6 +151,8 @@ get_gps_inside_geofence = function(userpass, password, query){
 
 points_inside_geofence = get_gps_inside_geofence(userpass = 'postgres', password = getPass('Password:'), query = query)
 ```
+
+
 
 
 ```{r}
@@ -287,6 +295,10 @@ get_cico = function(points_inside_geofences){
 cico_data = get_cico(points_inside_geofence)
 ```
 
+
+
+
+
 ```{r}
 cico_data = cico_data %>%
       rename(dwelltime = time_duration_at_geofence) %>%
@@ -319,13 +331,6 @@ cico_data %>%
       write_csv('cico_march_kodigo_1.csv')
 ```
 
-```{r}
-cico_data %>%
-      filter(plateno == 'CXK260')
-```
-
-
-
 
 ```{r}
 cico_data = cico_data %>%
@@ -333,6 +338,10 @@ cico_data = cico_data %>%
       mutate(geofence_name = str_replace_all(geofence_name,'Destination','Source')) %>%
       mutate(possible_overlap = ifelse(is.na(possible_overlap), 0 , possible_overlap)) %>%
       arrange(cico_id)
+```
+
+```{r}
+data = cico_data
 ```
 
 
@@ -363,7 +372,7 @@ fix_duplicates = function(data){
             mutate(new_last_timestamp = if_else(has_same_next == 1, lead(last_timestamp), last_timestamp)) %>%
             mutate(new_last_timestamp = coalesce(new_last_timestamp, last_timestamp)) %>%
             mutate(to_remove = lag(has_same_next == 1)) %>%
-            filter(to_remove != T) %>%
+            filter(to_remove == F | is.na(to_remove)) %>%
             select(-last_timestamp, -to_remove, -has_same_next) %>%
             rename(last_timestamp = new_last_timestamp)
       
