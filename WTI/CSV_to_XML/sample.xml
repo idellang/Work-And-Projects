@@ -1,0 +1,152 @@
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000584</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-18T04:23:39</dateTimeZone>
+            <code>G_LARRIVED</code>
+            <remark_1>LAT:14.2250166,LONG:121.1399283</remark_1>
+            <remark_2>Arrived at loading location, 8070 BCFG Calamba</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000584</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-18T06:23:39</dateTimeZone>
+            <code>G_LDEPART</code>
+            <remark_1>LAT:14.2250166,LONG:121.1399283</remark_1>
+            <remark_2>Departed at loading location, 8070 BCFG Calamba</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000584</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-20T13:14:57</dateTimeZone>
+            <code>G_UARRIVED</code>
+            <remark_1>LAT:14.2231055,LONG:121.1401257</remark_1>
+            <remark_2>Arrived at unloading location, Right Goods South Operations Inc. - Las Pinas</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000584</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-20T15:14:16</dateTimeZone>
+            <code>G_UDEPART</code>
+            <remark_1>LAT:14.2231055,LONG:121.1401257</remark_1>
+            <remark_2>Departed at unloading location, Right Goods South Operations Inc. - Las Pinas</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000560</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-21T08:15:24</dateTimeZone>
+            <code>G_LARRIVED</code>
+            <remark_1>LAT:14.2228754,LONG:121.1389755</remark_1>
+            <remark_2>Arrived at loading location, PH Cabuyao FG - UHT Source</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000560</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-21T10:05:15</dateTimeZone>
+            <code>G_LDEPART</code>
+            <remark_1>LAT:14.2228754,LONG:121.1389755</remark_1>
+            <remark_2>Departed at loading location, PH Cabuyao FG - UHT Source</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000560</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-21T19:38:04</dateTimeZone>
+            <code>G_UARRIVED</code>
+            <remark_1>LAT:14.2230014,LONG:121.1406654</remark_1>
+            <remark_2>Arrived at unloading location, OCSI - San Pablo</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    
+<status xmlns="http://www.kewill.com/logistics/klic/status" type="tag">
+    <ediCustomerNumber>99999998</ediCustomerNumber>
+    <ediParam1>4</ediParam1>
+    <ediParam2>s</ediParam2>
+    <ediParam3>s</ediParam3>
+    <ediReference>Webcast</ediReference>
+    <internalNumber>7300000560</internalNumber>
+    <ediFunction1>2</ediFunction1>
+    <ediCustomerSearchName>STANDAARD</ediCustomerSearchName>
+    <fileHeader type = "tag">
+        <trackingAndTracing type = "tag">
+            <dateTimeZone>2020-07-20T20:14:55</dateTimeZone>
+            <code>G_UDEPART</code>
+            <remark_1>LAT:14.2230014,LONG:121.1406654</remark_1>
+            <remark_2>Departed at unloading location, OCSI - San Pablo</remark_2>
+        </trackingAndTracing>
+    </fileHeader>
+</status>
+    

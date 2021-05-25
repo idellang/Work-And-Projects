@@ -8,7 +8,7 @@ geofences = gpd.read_file(zipfile)
 
 
 ## load gps points and convert to geopandas dataframe
-gps_points = pd.read_csv("Nestle_JM0314_April1-April10-Formatted.csv")
+gps_points = pd.read_csv("Nestle_March_Kodigo_GPS-Formatted-v2.csv")
 gps_points = gpd.GeoDataFrame(
     gps_points,
     geometry=gpd.points_from_xy(gps_points["longitude"], gps_points["latitude"]),
@@ -31,4 +31,4 @@ points_inside_geofence = points_inside_geofence.rename(
 # convert to datetime
 data = points_inside_geofence.sort_values(by="datestamp")
 
-print(data)
+data.to_csv("points_inside_geofences.csv", index=False)

@@ -1,13 +1,14 @@
 ---
-title: "Fixing Dashboard Data"
+title: "Geofence Library"
 author: "Me"
-date: "4/12/2021"
+date: "5/20/2021"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
 
 ## R Markdown
 
@@ -20,7 +21,7 @@ library(plotly)
 ```
 
 ```{r}
-geofences = read_csv('Geofence Library/TMSUITE-Geofences-asof-0517-Formatted.csv')
+geofences = read_csv('TMSUITE-Geofences-asof-0517-Formatted.csv')
 geofences = geofences %>%
       select(name, group_names, geofence_code)
 
@@ -41,7 +42,7 @@ geofences = geofences %>%
 
 
 ```{r}
-DC = read_csv('Geofence Library/Nestle-P-Geofences.csv') 
+DC = read_csv('Nestle-P-Geofences.csv') 
 ```
 
 ```{r}
@@ -69,6 +70,19 @@ geofences_with_dc = geofences_with_dc %>%
 ```{r}
 geofences_with_dc %>%
    arrange(desc(num_dc))   
+```
+
+```{r}
+no_dc = read_csv('nodcdata_12.csv')
+no_dc = no_dc %>%
+      select(name, geofence_code)
+```
+
+```{r}
+no_dc %>%
+      mutate(in_geofences_with_dc = .$name %in% geofences_with_dc$name) %>%
+      mutate(in_dropoff = .$name %in% DC$Pickups) %>%
+      mutate(in_orig_geofence = .$name %in% geofences$name)
 ```
 
 

@@ -1,0 +1,26 @@
+---
+title: "Local Geofence"
+author: "Me"
+date: "5/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+data = read_csv('TMSuite (GIS) - Local Geofences Library - Nestle-Local Geofences.csv')
+```
+
+```{r}
+data %>%
+        select(tripupdate) %>%
+        count(tripupdate)
+```
+

@@ -18,32 +18,27 @@ library(data.table)
 ```
 
 
+Load GPS data
 ```{r}
-data = read_csv('Nestle_March_Kodigo_GPS-Formatted.csv')
+data = read_csv('Nestle_April_Kodigo_GPS-Formatted-v2.csv')
 data
 ```
 
 
-
-```{r}
-data %>%
-      filter(plateno == 'KAD4602') %>%
-      arrange(created) %>%
-      filter(created >= '2021-03-14 10:39:00')
-```
-
+Check the minimum timestamp and maximum timestamp for date range
 ```{r}
 data %>%
       summarise(min(created), max(created))
 ```
 
+Rename created column todatestamp
 ```{r}
 data = data %>%
       rename(datestamp = created)
 ```
 
 
-
+Format the data to get datestamp, plateno, longitude, and latitude
 ```{r}
 format_data = function(data){
       
@@ -78,20 +73,12 @@ format_data = function(data){
 formatted_data = format_data(data)
 ```
 
-```{r}
-formatted_data %>%
-      summarise(min(datestamp),
-                max(datestamp))
-```
-
-
-```{r}
-formatted_data
-```
 
 
 ## Transfer GPS data to postgis
 Transfer GPS data to postgis for spatial analysis
+
+This will create a staging table which contains raw data
 
 ```{r}
 gps_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass, password){
@@ -112,6 +99,23 @@ gps_to_postgis = function(data, postgis_table = 'gps_to_postgis_table', userpass
 gps_to_postgis(formatted_data, 'staging_table', userpass = 'postgres', password = getPass('Password:'))
 ```
 
+Use these queries on postgis
+
+
+CREATE TABLE gps_data
+(
+    datestamp text,
+   	geom geometry(point,4326),
+	plateno text
+);
+
+
+INSERT INTO gps_data
+SELECT 
+	datestamp,
+	ST_TRANSFORM(ST_SETSRID(ST_POINT(longitude, latitude), 4326), 4326) AS geom,
+	plateno
+FROM staging_table
 
 
 
@@ -124,7 +128,7 @@ query =  "SELECT
 	t.plateno,
 	g.name AS geofence_name
 FROM 
-	kodigo_gps_1 AS t
+	KAD4602 AS t
 JOIN
 	nestle_geofences_april29 AS g
 ON 
@@ -152,15 +156,6 @@ get_gps_inside_geofence = function(userpass, password, query){
 points_inside_geofence = get_gps_inside_geofence(userpass = 'postgres', password = getPass('Password:'), query = query)
 ```
 
-
-
-
-```{r}
-points_inside_geofence %>%
-      summarise(min(datestamp), max(datestamp))
-```
-
-
 ```{r}
 vehicle_location_group = points_inside_geofence %>%
       mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
@@ -169,15 +164,20 @@ vehicle_location_group = points_inside_geofence %>%
              time_end = max(datestamp),
              num_points = n()) %>%
       mutate(duration = as.duration(time_end - time_start)) 
-
-
 ```
 
 
+```{r}
+vehicle_location_group %>%
+      filter(str_detect(geofence_name, 'Robinson'))
+```
 
+Function to get CICO
 
 ```{r}
 get_cico = function(points_inside_geofences){
+      
+      # group by tracking period and get timestart, time end, num points, and duratioin
    vehicle_location_group = points_inside_geofence %>%
       mutate(track_period = floor_date(datestamp, '30 minutes')) %>%
       group_by(plateno, geofence_name, track_period) %>%
@@ -187,16 +187,17 @@ get_cico = function(points_inside_geofences){
       mutate(duration = as.duration(time_end - time_start)) 
 
 
-   #remove passed only
+   #remove those groups that are less than 5 mins and less than 5 points
    vehicle_location_group_reduced = vehicle_location_group%>%
          filter(duration  > 300 & num_points > 5) %>%
          arrange(plateno, geofence_name, track_period)
    
-   
+   # select releavnt column and get distinct
    vehicle_location_group_reduced = vehicle_location_group_reduced %>%
          select(plateno, geofence_name, track_period, time_start, time_end, duration, num_points)  %>%
          distinct()
    
+   # arrange byt platetno and tracking period
    morethan5mins = vehicle_location_group_reduced %>%
       arrange(plateno, track_period)
 
@@ -204,17 +205,20 @@ get_cico = function(points_inside_geofences){
    morethan5mins = morethan5mins %>%
          rename(duration_period_at_geofence = duration)
    
-   #remove initial checking
+   ## arrange by plateno and geofence name
    morethan5mins = morethan5mins %>%
          group_by(plateno, geofence_name) %>%
          arrange(plateno, geofence_name)
    
+   # get time end and time start at next locations
+   # also get the time difference from prev and to next location
    morethan5mins = morethan5mins %>%
       mutate(time_end_previous_location = lag(time_end),
              time_start_next_location = lead(time_start)) %>%
       mutate(time_difference_to_next_location = as.duration(time_start_next_location - time_end),
              time_difference_from_prev_location =as.duration(time_start - time_end_previous_location)) 
    
+   ## arrange coluimns
    morethan5mins = morethan5mins %>%
       select(plateno,
              geofence_name,
@@ -227,7 +231,7 @@ get_cico = function(points_inside_geofences){
              time_difference_from_prev_location,
              everything())
    
-   
+   ## check if continuing on both locations
    morethan5mins = morethan5mins %>%
         mutate(continue_next_location = time_difference_to_next_location < 300,
                contine_prev_location = time_difference_from_prev_location < 300)  %>%
@@ -297,8 +301,7 @@ cico_data = get_cico(points_inside_geofence)
 
 
 
-
-
+Rename column
 ```{r}
 cico_data = cico_data %>%
       rename(dwelltime = time_duration_at_geofence) %>%
@@ -306,8 +309,7 @@ cico_data = cico_data %>%
 ```
 
 
-
-
+Create CICO ID
 ```{r}
 cico_data = cico_data %>%
       rename(datestamp_entry = first_timestamp,
@@ -328,10 +330,11 @@ cico_data = cico_data %>%
 
 cico_data %>%
       arrange(cico_id) %>%
-      write_csv('cico_march_kodigo_1.csv')
+      select(-possible_overlap) %>%
+      write_csv('KAD4602_old_ver.csv')
 ```
 
-
+Change destination to source
 ```{r}
 cico_data = cico_data %>%
       ungroup() %>%
@@ -339,6 +342,7 @@ cico_data = cico_data %>%
       mutate(possible_overlap = ifelse(is.na(possible_overlap), 0 , possible_overlap)) %>%
       arrange(cico_id)
 ```
+
 
 ```{r}
 data = cico_data

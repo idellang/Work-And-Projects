@@ -1,0 +1,48 @@
+---
+title: "LF carbon"
+author: "Me"
+date: "5/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+data = read.csv('LF_logistics_carbon.csv')
+```
+
+```{r}
+data %>%
+      count(name)
+```
+```{r}
+data %>%
+      group_by(device_alias, vehicle_type, datestamp, distance_km) %>%
+      summarise(n = n_distinct(name)) %>%
+      ungroup() %>%
+      count(n)
+```
+
+```{r}
+10308 * 3
+```
+
+```{r}
+data %>%
+      arrange(desc(distance_km))
+```
+
+```{r}
+library(lubridate)
+
+data %>%
+      filter(name == 'LF Logistics') %>%
+      select(-name) %>%
+      mutate(datestamp = ymd(datestamp)) %>%
+      write_csv('LF_carbon.csv')
+```
+

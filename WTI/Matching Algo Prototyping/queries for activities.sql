@@ -46,10 +46,7 @@ FROM
 	nestle_geofences_march23 AS g
 WHERE 
 	name = 'PH Cagayan Grocery - Source'
-AND
-	datestamp > '2021-04-01 17:48:54'
-AND
-	datestamp < '2021-04-05 05:42:55'
+me
 ORDER BY datestamp ASC
  
 
@@ -72,3 +69,10 @@ AND
 	datestamp < '2021-04-05 10:21:56'
 ORDER BY datestamp ASC
 
+
+SELECT name, geom 
+FROM nestle_geofences_april29
+WHERE
+	name LIKE '%PH Batino%'
+OR 
+	name LIKE '%Pure Logistics%'
